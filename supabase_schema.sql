@@ -12,6 +12,7 @@ CREATE TABLE master_lead_sources (
 CREATE TABLE master_expense_categories (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT UNIQUE NOT NULL,
+  sort_order INTEGER DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -59,12 +60,15 @@ CREATE TABLE events (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   event_id_serial TEXT UNIQUE,
   name TEXT NOT NULL,
+  start_date DATE,
+  end_date DATE,
   client_id UUID REFERENCES clients(id),
   status TEXT DEFAULT 'New Lead',
   lead_source_id UUID REFERENCES master_lead_sources(id),
   sales_executive_id UUID REFERENCES staff(id),
-  budget_estimated NUMERIC DEFAULT 0,
-  budget_actual NUMERIC DEFAULT 0,
+  budget_estimated NUMERIC DEFAULT 0,  -- Auto: sum of qty x estimated_cost from budget_items
+  budget_actual NUMERIC DEFAULT 0,      -- Manual: Closing Budget (what we charge the client)
+  budget_actual_cost NUMERIC DEFAULT 0, -- Auto: sum of qty x actual_cost from budget_items
   amount_received NUMERIC DEFAULT 0,
   amount_outstanding NUMERIC DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
@@ -104,6 +108,7 @@ CREATE TABLE budget_items (
   estimated_cost NUMERIC DEFAULT 0,
   actual_cost NUMERIC DEFAULT 0,
   notes TEXT,
+  is_sub_header BOOLEAN DEFAULT false,
   function_id UUID REFERENCES event_functions(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -118,6 +123,7 @@ CREATE TABLE expenses (
   payment_method_id UUID REFERENCES master_payment_methods(id),
   account_id UUID REFERENCES master_accounts(id),
   remarks TEXT,
+  narration TEXT,
   function_id UUID REFERENCES event_functions(id) ON DELETE SET NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -133,6 +139,7 @@ CREATE TABLE client_payments (
   account TEXT,
   reference_number TEXT,
   notes TEXT,
+  narration TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
@@ -145,6 +152,7 @@ CREATE TABLE vendor_payments (
   payment_method_id UUID REFERENCES master_payment_methods(id),
   account_id UUID REFERENCES master_accounts(id),
   reference_number TEXT,
+  narration TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 

@@ -77,7 +77,8 @@ const EventMaster = () => {
       ...evt,
       clientName: client.name || 'Unknown',
       clientPhone: client.phone || 'N/A',
-      primaryDate: primaryFunc.function_date || null,
+      primaryDate: evt.start_date || primaryFunc.function_date || null,
+      endDate: evt.end_date || null,
       venue: primaryFunc.venue || 'TBD'
     };
   });
@@ -223,7 +224,10 @@ const EventMaster = () => {
                 </div>
                 <div className="flex items-center space-x-1.5 text-xs text-slate-500">
                   <Calendar size={12} className="text-slate-400" />
-                  <span>{event.primaryDate ? formatDate(event.primaryDate) : 'TBD'}</span>
+                  <span>
+                    {event.primaryDate ? formatDate(event.primaryDate) : 'TBD'}
+                    {event.endDate && event.endDate !== event.primaryDate ? ` - ${formatDate(event.endDate)}` : ''}
+                  </span>
                 </div>
               </div>
 

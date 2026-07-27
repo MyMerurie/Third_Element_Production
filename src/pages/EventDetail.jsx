@@ -48,6 +48,8 @@ const EventDetail = () => {
   const [editTarget, setEditTarget] = useState(null); // stores object when editing
   const [expandedCategories, setExpandedCategories] = useState({});
   const [otherEvents, setOtherEvents] = useState([]);
+  const [draggedCatIndex, setDraggedCatIndex] = useState(null);
+  const [dragOverCatIndex, setDragOverCatIndex] = useState(null);
   const [ceremonyForm, setCeremonyForm] = useState({
     name: '',
     function_date: new Date().toISOString().split('T')[0],
@@ -58,6 +60,13 @@ const EventDetail = () => {
   const [isEditingOverview, setIsEditingOverview] = useState(false);
   const [overviewForm, setOverviewForm] = useState({});
   const [clientForm, setClientForm] = useState({});
+
+  // Event Dates Tab Edit State
+  const [isEditingDates, setIsEditingDates] = useState(false);
+  const [datesForm, setDatesForm] = useState({
+    start_date: '',
+    end_date: ''
+  });
 
   // Dynamic Modals Form State
   const [meetingForm, setMeetingForm] = useState({
@@ -115,6 +124,10 @@ const EventDetail = () => {
       if (eventErr) throw eventErr;
       setEvent(eventData);
       setOverviewForm(eventData);
+      setDatesForm({
+        start_date: eventData.start_date || '',
+        end_date: eventData.end_date || ''
+      });
 
       // 2. Fetch Client
       if (eventData.client_id) {
@@ -142,7 +155,7 @@ const EventDetail = () => {
       ] = await Promise.all([
         supabase.from('event_functions').select('*').eq('event_id', eventId),
         supabase.from('event_meetings').select('*').eq('event_id', eventId).order('meeting_date', { ascending: false }),
-        supabase.from('budget_items').select('*').eq('event_id', eventId),
+        supabase.from('budget_items').select('*').eq('event_id', eventId).order('created_at', { ascending: true }),
         supabase.from('expenses').select('*').eq('event_id', eventId).order('date', { ascending: false }),
         supabase.from('client_payments').select('*').eq('event_id', eventId).order('date', { ascending: false }),
         supabase.from('vendor_payments').select('*').eq('event_id', eventId).order('date', { ascending: false }),
@@ -150,7 +163,7 @@ const EventDetail = () => {
         supabase.from('staff').select('*'),
         supabase.from('master_accounts').select('*'),
         supabase.from('master_payment_methods').select('*'),
-        supabase.from('master_expense_categories').select('*'),
+        supabase.from('master_expense_categories').select('*').order('sort_order', { ascending: true, nullsFirst: false }),
         supabase.from('master_lead_sources').select('*')
       ]);
 
@@ -229,30 +242,44 @@ const EventDetail = () => {
   }, [eventId]);
 
   // Recalculates metrics and updates events table in Supabase
-  const updateEventFinancials = async () => {
+  // Budget Terminology:
+  //   budget_actual       = Closing Budget  (manually entered – what we charge the client)
+  //   budget_estimated    = Estimated Budget (auto: sum of qty × estimated_cost from budget_items)
+  //   budget_actual_cost  = Actual Budget    (auto: sum of qty × actual_cost from budget_items)
+  const updateEventFinancials = async (forceRecalculateBudgets = false) => {
     // 1. Fetch latest event details
     const { data: latestEvent } = await supabase.from('events').select('*').eq('id', eventId).single();
     const currentEvent = latestEvent || event;
 
-    // 2. Fetch latest budget items to calculate Estimated Budget and Closing Budget
-    const { data: bItems } = await supabase.from('budget_items').select('*').eq('event_id', eventId);
-    const activeBudgetItems = bItems || [];
-    const bEst = activeBudgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.estimated_cost || 0)), 0);
-    const bAct = activeBudgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.actual_cost || 0)), 0);
+    let bEst = currentEvent.budget_estimated;     // estimated budget (auto)
+    let bActCost = currentEvent.budget_actual_cost; // actual budget (auto)
+    // Closing budget (bAct) is NEVER auto-recalculated here – it stays as user entered
+    const bAct = currentEvent.budget_actual;
+
+    if (forceRecalculateBudgets) {
+      // 2. Fetch latest budget items
+      const { data: bItems } = await supabase.from('budget_items').select('*').eq('event_id', eventId);
+      const activeBudgetItems = bItems || [];
+      // Estimated Budget = sum of qty × estimated_cost
+      bEst = activeBudgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.estimated_cost || 0)), 0);
+      // Actual Budget = sum of qty × actual_cost
+      bActCost = activeBudgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.actual_cost || 0)), 0);
+    }
 
     // 3. Fetch latest client payments to calculate Total Received
     const { data: cPayments } = await supabase.from('client_payments').select('*').eq('event_id', eventId);
     const amtRec = (cPayments || []).reduce((sum, p) => sum + Number(p.amount_received || 0), 0);
 
-    // 4. Outstanding is always calculated as Closing Budget (bAct) - Total Received
+    // 4. Outstanding = Closing Budget − Total Received
     const amtOut = Math.max(0, bAct - amtRec);
 
     // 5. Update Database row
     const { error } = await supabase.from('events').update({
       budget_estimated: bEst,
+      budget_actual_cost: bActCost,
       amount_received: amtRec,
-      amount_outstanding: amtOut,
-      budget_actual: bAct
+      amount_outstanding: amtOut
+      // budget_actual (closing) is NOT touched here
     }).eq('id', eventId);
 
     if (error) {
@@ -260,13 +287,56 @@ const EventDetail = () => {
     } else {
       const updatedMetrics = {
         budget_estimated: bEst,
+        budget_actual_cost: bActCost,
         amount_received: amtRec,
-        amount_outstanding: amtOut,
-        budget_actual: bAct
+        amount_outstanding: amtOut
       };
       setEvent(prev => ({ ...prev, ...updatedMetrics }));
       setOverviewForm(prev => ({ ...prev, ...updatedMetrics }));
     }
+  };
+
+  // BUDGET TAB: Drag and Drop Reordering
+  const handleDragStart = (e, index) => {
+    setDraggedCatIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnter = (e, index) => {
+    e.preventDefault();
+    setDragOverCatIndex(index);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const handleDragEnd = async () => {
+    if (draggedCatIndex !== null && dragOverCatIndex !== null && draggedCatIndex !== dragOverCatIndex) {
+      const newCategories = [...expenseCategories];
+      const draggedItem = newCategories[draggedCatIndex];
+      
+      newCategories.splice(draggedCatIndex, 1);
+      newCategories.splice(dragOverCatIndex, 0, draggedItem);
+      
+      // Update local state immediately
+      setExpenseCategories(newCategories);
+      
+      // Save order to DB globally
+      try {
+        const updates = newCategories.map((cat, idx) => ({
+          id: cat.id,
+          name: cat.name,
+          sort_order: idx
+        }));
+        
+        await supabase.from('master_expense_categories').upsert(updates);
+      } catch (err) {
+        console.error("Failed to update category order:", err);
+      }
+    }
+    setDraggedCatIndex(null);
+    setDragOverCatIndex(null);
   };
 
   // OVERVIEW TAB: Save handler
@@ -281,7 +351,7 @@ const EventDetail = () => {
       }).eq('id', event.client_id);
       if (clientErr) throw clientErr;
 
-      // 2. Update event details
+      // 2. Update event details – only Closing Budget (budget_actual) is user-editable here
       const bAct = Number(overviewForm.budget_actual || 0);
 
       const { error: eventErr } = await supabase.from('events').update({
@@ -289,7 +359,9 @@ const EventDetail = () => {
         status: overviewForm.status,
         lead_source_id: overviewForm.lead_source_id || null,
         sales_executive_id: overviewForm.sales_executive_id || null,
-        budget_actual: bAct
+        budget_actual: bAct,  // Closing Budget – what we charge the client
+        start_date: overviewForm.start_date || null,
+        end_date: overviewForm.end_date || null
       }).eq('id', eventId);
       if (eventErr) throw eventErr;
 
@@ -297,7 +369,29 @@ const EventDetail = () => {
       setIsEditingOverview(false);
       
       // Calculate latest estimated budget, payments received, and outstanding
-      await updateEventFinancials();
+      await updateEventFinancials(false);
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      showNotification("Update failed: " + err.message, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // EVENT DATES TAB: Save handler
+  const handleSaveDates = async () => {
+    setLoading(true);
+    try {
+      const { error: eventErr } = await supabase.from('events').update({
+        start_date: datesForm.start_date || null,
+        end_date: datesForm.end_date || null
+      }).eq('id', eventId);
+      if (eventErr) throw eventErr;
+
+      showNotification("Event dates updated successfully!");
+      setIsEditingDates(false);
+      
       await loadData();
     } catch (err) {
       console.error(err);
@@ -424,9 +518,26 @@ const EventDetail = () => {
 
       if (error) throw error;
       setBudgetItems(prev => [...prev, data]);
-      showNotification("Item added. Click cells to edit.");
+      setExpandedCategories(prev => ({ ...prev, [categoryId]: true }));
     } catch (err) {
-      showNotification("Add failed: " + err.message, "error");
+      showNotification("Failed to add item", "error");
+    }
+  };
+
+  const handleAddSubHeader = async (categoryId) => {
+    try {
+      const { data, error } = await supabase.from('budget_items').insert({
+        event_id: eventId,
+        category_id: categoryId,
+        description: 'New Sub Header',
+        is_sub_header: true
+      }).select().single();
+
+      if (error) throw error;
+      setBudgetItems(prev => [...prev, data]);
+      setExpandedCategories(prev => ({ ...prev, [categoryId]: true }));
+    } catch (err) {
+      showNotification("Failed to add sub-header", "error");
     }
   };
 
@@ -449,7 +560,7 @@ const EventDetail = () => {
 
       if (error) throw error;
 
-      updateEventFinancials();
+      updateEventFinancials(true);
 
     } catch (err) {
       console.error(err);
@@ -466,7 +577,7 @@ const EventDetail = () => {
       const remaining = budgetItems.filter(b => b.id !== itemId);
       setBudgetItems(remaining);
 
-      updateEventFinancials();
+      updateEventFinancials(true);
 
       showNotification("Item deleted.");
     } catch (err) {
@@ -824,6 +935,17 @@ const EventDetail = () => {
     };
   }).filter(vf => vf.isAssigned);
 
+  // Overview Tab Dynamic Financials (computed live from in-memory budgetItems)
+  // Estimated Budget = sum of qty × estimated_cost
+  const estimatedBudgetCalc = budgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.estimated_cost || 0)), 0);
+  // Actual Budget = sum of qty × actual_cost (post-event real costs)
+  const actualBudgetCalc = budgetItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.actual_cost || 0)), 0);
+  // Closing Budget – what user enters manually
+  const currentClosing = isEditingOverview ? Number(overviewForm.budget_actual || 0) : Number(event.budget_actual || 0);
+  // Profit / Loss = Closing Budget − Actual Budget
+  const profitLoss = currentClosing - actualBudgetCalc;
+  const isProfit = profitLoss >= 0;
+
   return (
     <div className="space-y-6 pb-12 font-sans relative">
       {/* Toast Notification */}
@@ -874,7 +996,7 @@ const EventDetail = () => {
           </div>
 
           {/* Financial Summary */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white/10 p-3.5 rounded-xl border border-white/15 w-full md:w-auto">
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-3 bg-white/10 p-3.5 rounded-xl border border-white/15 w-full md:w-auto">
             <div className="text-center">
               <span className="block text-[10px] text-white/70 uppercase">Closing Budget</span>
               <span className="text-sm font-bold text-amber-300 flex items-center justify-center">
@@ -886,7 +1008,14 @@ const EventDetail = () => {
               <span className="block text-[10px] text-white/70 uppercase">Estimated Budget</span>
               <span className="text-sm font-bold flex items-center justify-center">
                 <IndianRupee size={12} className="mr-0.5" />
-                {Number(event.budget_estimated || 0).toLocaleString('en-IN')}
+                {estimatedBudgetCalc.toLocaleString('en-IN')}
+              </span>
+            </div>
+            <div className="text-center">
+              <span className="block text-[10px] text-white/70 uppercase">Actual Budget</span>
+              <span className="text-sm font-bold text-orange-300 flex items-center justify-center">
+                <IndianRupee size={12} className="mr-0.5" />
+                {actualBudgetCalc.toLocaleString('en-IN')}
               </span>
             </div>
             <div className="text-center">
@@ -897,10 +1026,10 @@ const EventDetail = () => {
               </span>
             </div>
             <div className="text-center">
-              <span className="block text-[10px] text-white/70 uppercase">Outstanding</span>
-              <span className="text-sm font-bold text-rose-300 flex items-center justify-center">
+              <span className="block text-[10px] text-white/70 uppercase">Profit / Loss</span>
+              <span className={`text-sm font-bold flex items-center justify-center ${isProfit ? 'text-green-300' : 'text-rose-300'}`}>
                 <IndianRupee size={12} className="mr-0.5" />
-                {Number(event.amount_outstanding || 0).toLocaleString('en-IN')}
+                {isProfit ? '+' : ''}{profitLoss.toLocaleString('en-IN')}
               </span>
             </div>
           </div>
@@ -909,7 +1038,7 @@ const EventDetail = () => {
 
       {/* TAB SELECTOR */}
       <div className="border-b border-slate-200 flex overflow-x-auto pb-px scrollbar-hide">
-        {['Overview', 'Meetings', 'Budget', 'Vendors', 'Client Payments', 'Vendor Payments', 'Notes'].map(tab => (
+        {['Overview', 'Event Dates', 'Meetings', 'Budget', 'Vendors', 'Client Payments', 'Vendor Payments', 'Notes'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -977,6 +1106,33 @@ const EventDetail = () => {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Event Start Date</label>
+                      <input 
+                        type="date"
+                        className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
+                          isEditingOverview ? 'bg-white border-slate-300 focus:border-primary-500' : 'bg-slate-50 border-transparent pointer-events-none'
+                        }`}
+                        value={overviewForm.start_date || ''}
+                        onChange={e => setOverviewForm({...overviewForm, start_date: e.target.value})}
+                        readOnly={!isEditingOverview}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Event End Date</label>
+                      <input 
+                        type="date"
+                        className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
+                          isEditingOverview ? 'bg-white border-slate-300 focus:border-primary-500' : 'bg-slate-50 border-transparent pointer-events-none'
+                        }`}
+                        value={overviewForm.end_date || ''}
+                        onChange={e => setOverviewForm({...overviewForm, end_date: e.target.value})}
+                        readOnly={!isEditingOverview}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1">Event Status</label>
                       <select 
                         className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
@@ -1028,22 +1184,48 @@ const EventDetail = () => {
                     </select>
                   </div>
 
+                  {/* Row 1: Closing Budget (editable) + Estimated Budget (read-only auto) */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Closing Budget (₹) (Calculated)</label>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Closing Budget (₹) <span className="text-primary-500 font-normal">– Client Price</span></label>
                       <input 
                         type="number"
-                        className="w-full text-sm rounded-lg px-3 py-1.5 border transition-all bg-slate-50 border-transparent pointer-events-none text-slate-500 font-bold"
+                        className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
+                          isEditingOverview ? 'bg-white border-slate-300 focus:border-primary-500' : 'bg-slate-50 border-transparent pointer-events-none'
+                        } text-slate-700 font-bold`}
                         value={overviewForm.budget_actual === null || overviewForm.budget_actual === undefined ? '' : overviewForm.budget_actual}
+                        onChange={e => setOverviewForm({...overviewForm, budget_actual: e.target.value === '' ? '' : Number(e.target.value)})}
+                        readOnly={!isEditingOverview}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Estimated Budget (₹) <span className="text-slate-400 font-normal">– Auto</span></label>
+                      <input 
+                        type="text"
+                        className="w-full text-sm rounded-lg px-3 py-1.5 border transition-all bg-slate-50 border-transparent pointer-events-none text-slate-500"
+                        value={`₹${estimatedBudgetCalc.toLocaleString('en-IN')}`}
+                        readOnly
+                      />
+                    </div>
+                  </div>
+
+                  {/* Row 2: Actual Budget (auto from actual_cost) + Profit/Loss */}
+                  <div className="grid grid-cols-2 gap-3 mt-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Actual Budget (₹) <span className="text-slate-400 font-normal">– Auto</span></label>
+                      <input 
+                        type="text"
+                        className="w-full text-sm rounded-lg px-3 py-1.5 border transition-all bg-slate-50 border-transparent pointer-events-none text-slate-500 font-bold"
+                        value={`₹${actualBudgetCalc.toLocaleString('en-IN')}`}
                         readOnly
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Estimated Budget (₹) (Calculated)</label>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Profit / Loss <span className="text-slate-400 font-normal">(Closing − Actual)</span></label>
                       <input 
-                        type="number"
-                        className="w-full text-sm rounded-lg px-3 py-1.5 border transition-all bg-slate-50 border-transparent pointer-events-none text-slate-500"
-                        value={overviewForm.budget_estimated === null || overviewForm.budget_estimated === undefined ? '' : overviewForm.budget_estimated}
+                        type="text"
+                        className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all bg-slate-50 border-transparent pointer-events-none font-bold ${isProfit ? 'text-green-600' : 'text-red-600'}`}
+                        value={`${isProfit ? '+' : ''}₹${profitLoss.toLocaleString('en-IN')}`}
                         readOnly
                       />
                     </div>
@@ -1165,7 +1347,92 @@ const EventDetail = () => {
             <div className="border-t border-slate-100 pt-5">
               <div className="flex justify-between items-center mb-3">
                 <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider">Event Ceremony Schedule</h4>
-                {isEditingOverview && (
+              </div>
+              
+              {functions.length === 0 ? (
+                <p className="text-xs text-slate-400 py-6 text-center">No ceremonies scheduled for this event yet.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {functions.map(f => (
+                    <div key={f.id} className="p-3 border border-slate-150 rounded-xl bg-slate-50 space-y-1.5 text-xs relative">
+                      <div className="flex justify-between items-start">
+                        <div className="font-bold text-slate-805 text-sm truncate max-w-[180px]">{f.name}</div>
+                      </div>
+                      <div className="text-slate-500 flex items-center">
+                        <Calendar size={12} className="mr-1 text-slate-400" /> {formatDate(f.function_date)}
+                      </div>
+                      <div className="text-slate-500 flex items-center">
+                        <MapPin size={12} className="mr-1 text-slate-400" /> {f.venue || 'No venue recorded'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* EVENT DATES TAB */}
+        {activeTab === 'Event Dates' && (
+          <div className="card p-5 space-y-6 bg-white">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <h3 className="font-bold text-slate-800 text-sm">Overall Event Dates & Ceremonies</h3>
+              {!isEditingDates ? (
+                <button 
+                  onClick={() => setIsEditingDates(true)} 
+                  className="btn-secondary py-1 px-3 text-xs flex items-center space-x-1 cursor-pointer bg-white"
+                >
+                  <Edit2 size={12} /> <span>Edit Dates</span>
+                </button>
+              ) : (
+                <div className="flex space-x-2">
+                  <button 
+                    onClick={() => { setIsEditingDates(false); loadData(); }} 
+                    className="btn-secondary py-1 px-3 text-xs cursor-pointer bg-white"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleSaveDates} 
+                    className="btn-primary py-1 px-3 text-xs cursor-pointer flex items-center space-x-1"
+                  >
+                    <Save size={12} /> <span>Save</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Event Start Date</label>
+                  <input 
+                    type="date"
+                    className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
+                      isEditingDates ? 'bg-white border-slate-300 focus:border-primary-500' : 'bg-slate-50 border-transparent pointer-events-none'
+                    }`}
+                    value={datesForm.start_date || ''}
+                    onChange={e => setDatesForm({...datesForm, start_date: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Event End Date</label>
+                  <input 
+                    type="date"
+                    className={`w-full text-sm rounded-lg px-3 py-1.5 border transition-all ${
+                      isEditingDates ? 'bg-white border-slate-300 focus:border-primary-500' : 'bg-slate-50 border-transparent pointer-events-none'
+                    }`}
+                    value={datesForm.end_date || ''}
+                    onChange={e => setDatesForm({...datesForm, end_date: e.target.value})}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-slate-100 pt-5">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider">Event Ceremony Schedule</h4>
+                {isEditingDates && (
                   <button 
                     onClick={() => {
                       setEditTarget(null);
@@ -1192,7 +1459,7 @@ const EventDetail = () => {
                     <div key={f.id} className="p-3 border border-slate-150 rounded-xl bg-slate-50 space-y-1.5 text-xs relative">
                       <div className="flex justify-between items-start">
                         <div className="font-bold text-slate-805 text-sm truncate max-w-[180px]">{f.name}</div>
-                        {isEditingOverview && (
+                        {isEditingDates && (
                           <div className="flex space-x-1 shrink-0">
                             <button 
                               onClick={() => {
@@ -1362,20 +1629,38 @@ const EventDetail = () => {
               </div>
             </div>
 
-            {expenseCategories.map(cat => {
+            {expenseCategories.map((cat, index) => {
               const catItems = budgetItems.filter(bi => bi.category_id === cat.id);
+              
               const catEst = catItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.estimated_cost || 0)), 0);
               const catAct = catItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.actual_cost || 0)), 0);
               const isExpanded = expandedCategories[cat.id];
+              const isDragging = draggedCatIndex === index;
+              const isDragOver = dragOverCatIndex === index;
 
               return (
-                <div key={cat.id} className="border border-slate-250 rounded-xl overflow-hidden shadow-sm">
+                <div 
+                  key={cat.id} 
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, index)}
+                  onDragEnter={(e) => handleDragEnter(e, index)}
+                  onDragOver={handleDragOver}
+                  onDragEnd={handleDragEnd}
+                  className={`border border-slate-250 rounded-xl overflow-hidden shadow-sm transition-all duration-200 ${
+                    isDragging ? 'opacity-50 scale-[0.99] border-primary-400' : 'opacity-100'
+                  } ${
+                    isDragOver && draggedCatIndex !== index ? 'border-primary-500 shadow-md translate-y-1' : ''
+                  }`}
+                >
                   {/* Category Header */}
                   <div 
                     onClick={() => setExpandedCategories({...expandedCategories, [cat.id]: !isExpanded})}
                     className="flex justify-between items-center bg-slate-50 p-3 cursor-pointer select-none border-b border-slate-200"
                   >
                     <div className="flex items-center space-x-2">
+                      <div className="text-slate-400 cursor-grab hover:text-slate-600 px-1" onClick={e => e.stopPropagation()}>
+                        <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor"><path d="M4 4c0-1.1-.9-2-2-2S0 2.9 0 4s.9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2z"/></svg>
+                      </div>
                       {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       <span className="font-bold text-xs text-slate-700 uppercase tracking-wide">{cat.name}</span>
                     </div>
@@ -1403,97 +1688,129 @@ const EventDetail = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                          {catItems.map(item => (
-                            <tr key={item.id} className="hover:bg-slate-50/50">
-                              <td className="py-2 pl-2">
-                                <input 
-                                  type="text" 
-                                  value={item.description || ''} 
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none font-medium transition-all"
-                                />
-                              </td>
-                              <td className="py-2 w-32 px-1">
-                                <select
-                                  value={item.vendor_id || ''}
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'vendor_id', e.target.value || null)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer"
-                                >
-                                  <option value="">-- Unassigned --</option>
-                                  {vendors.map(v => (
-                                    <option key={v.id} value={v.id}>{v.name}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="py-2 w-32 px-1">
-                                <select
-                                  value={item.function_id || ''}
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'function_id', e.target.value || null)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer text-xs"
-                                >
-                                  <option value="">General Costs</option>
-                                  {functions.map(f => (
-                                    <option key={f.id} value={f.id}>{f.name}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="py-2 w-20 px-1">
-                                <input 
-                                  type="number" 
-                                  value={item.quantity === null ? '' : item.quantity} 
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'quantity', e.target.value)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-center"
-                                />
-                              </td>
-                              <td className="py-2 w-20 px-1">
-                                <input 
-                                  type="text" 
-                                  value={item.unit || ''} 
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'unit', e.target.value)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all"
-                                />
-                              </td>
-                              <td className="py-2 w-24 px-1">
-                                <input 
-                                  type="number" 
-                                  value={item.estimated_cost === null ? '' : item.estimated_cost} 
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'estimated_cost', e.target.value)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
-                                />
-                              </td>
-                              <td className="py-2 w-24 text-right font-bold text-slate-700">
-                                ₹{(Number(item.quantity || 1) * Number(item.estimated_cost || 0)).toLocaleString('en-IN')}
-                              </td>
-                              <td className="py-2 w-24 px-1">
-                                <input 
-                                  type="number" 
-                                  value={item.actual_cost === null ? '' : item.actual_cost} 
-                                  onChange={e => handleUpdateBudgetItemInline(item.id, 'actual_cost', e.target.value)}
-                                  className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
-                                />
-                              </td>
-                              <td className="py-2 w-24 text-right pr-2 font-bold text-slate-800">
-                                ₹{(Number(item.quantity || 1) * Number(item.actual_cost || 0)).toLocaleString('en-IN')}
-                              </td>
-                              <td className="py-2 w-10 text-center">
-                                <button 
-                                  onClick={() => handleDeleteBudgetItem(item.id)}
-                                  className="text-slate-400 hover:text-red-600"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </td>
-                            </tr>
+                          {catItems.map((item) => (
+                            <React.Fragment key={item.id}>
+                              {item.is_sub_header ? (
+                                <tr className="bg-slate-100/60 border-t border-b border-slate-200">
+                                  <td colSpan="10" className="py-2 pl-3">
+                                    <input 
+                                      type="text" 
+                                      value={item.description || ''} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
+                                      className="w-full bg-transparent hover:bg-white focus:bg-white rounded px-2 py-1 outline-none font-bold text-slate-700 uppercase tracking-widest text-[10px] transition-all"
+                                      placeholder="Sub Header Name..."
+                                    />
+                                  </td>
+                                  <td className="py-2 w-10 text-center border-l border-slate-200/50">
+                                    <button 
+                                      onClick={() => handleDeleteBudgetItem(item.id)}
+                                      className="text-slate-400 hover:text-red-600 p-1"
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ) : (
+                                <tr className="hover:bg-slate-50/50">
+                                  <td className="py-2 pl-2">
+                                    <input 
+                                      type="text" 
+                                      value={item.description || ''} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none font-medium transition-all"
+                                    />
+                                  </td>
+                                  <td className="py-2 w-32 px-1">
+                                    <select
+                                      value={item.vendor_id || ''}
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'vendor_id', e.target.value || null)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer"
+                                    >
+                                      <option value="">-- Unassigned --</option>
+                                      {vendors.map(v => (
+                                        <option key={v.id} value={v.id}>{v.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="py-2 w-32 px-1">
+                                    <select
+                                      value={item.function_id || ''}
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'function_id', e.target.value || null)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer text-xs"
+                                    >
+                                      <option value="">General Costs</option>
+                                      {functions.map(f => (
+                                        <option key={f.id} value={f.id}>{f.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="py-2 w-20 px-1">
+                                    <input 
+                                      type="number" 
+                                      value={item.quantity === null ? '' : item.quantity} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'quantity', e.target.value)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-center"
+                                    />
+                                  </td>
+                                  <td className="py-2 w-20 px-1">
+                                    <input 
+                                      type="text" 
+                                      value={item.unit || ''} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'unit', e.target.value)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all"
+                                    />
+                                  </td>
+                                  <td className="py-2 w-24 px-1">
+                                    <input 
+                                      type="number" 
+                                      value={item.estimated_cost === null ? '' : item.estimated_cost} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'estimated_cost', e.target.value)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
+                                    />
+                                  </td>
+                                  <td className="py-2 w-24 text-right font-bold text-slate-700">
+                                    ₹{(Number(item.quantity || 1) * Number(item.estimated_cost || 0)).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="py-2 w-24 px-1">
+                                    <input 
+                                      type="number" 
+                                      value={item.actual_cost === null ? '' : item.actual_cost} 
+                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'actual_cost', e.target.value)}
+                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
+                                    />
+                                  </td>
+                                  <td className="py-2 w-24 text-right pr-2 font-bold text-slate-800">
+                                    ₹{(Number(item.quantity || 1) * Number(item.actual_cost || 0)).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="py-2 w-10 text-center">
+                                    <button 
+                                      onClick={() => handleDeleteBudgetItem(item.id)}
+                                      className="text-slate-400 hover:text-red-600"
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
                           ))}
                         </tbody>
                       </table>
                       
-                      <button 
-                        onClick={() => handleAddBudgetItem(cat.id)}
-                        className="text-xs text-primary-600 font-semibold hover:underline flex items-center space-x-0.5 cursor-pointer mt-1 pl-2"
-                      >
-                        <Plus size={12} /> <span>Add New Item</span>
-                      </button>
+                      <div className="flex items-center space-x-4 mt-2">
+                        <button 
+                          onClick={() => handleAddBudgetItem(cat.id)}
+                          className="text-xs text-primary-600 font-semibold hover:underline flex items-center space-x-0.5 cursor-pointer pl-2"
+                        >
+                          <Plus size={12} /> <span>Add New Item</span>
+                        </button>
+                        <button 
+                          onClick={() => handleAddSubHeader(cat.id)}
+                          className="text-xs text-slate-500 font-semibold hover:underline flex items-center space-x-0.5 cursor-pointer"
+                        >
+                          <Plus size={12} /> <span>Add Sub Header</span>
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

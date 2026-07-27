@@ -388,7 +388,7 @@ const More = () => {
       case 'clients':
         return ['name', 'phone', 'email'];
       case 'vendors':
-        return ['name', 'phone', 'email', 'status'];
+        return ['name', 'phone', 'email', 'total_business', 'status'];
       default:
         return [];
     }
@@ -403,7 +403,16 @@ const More = () => {
       case 'master_accounts': rows = accounts; break;
       case 'staff': rows = staff; break;
       case 'clients': rows = clients; break;
-      case 'vendors': rows = vendors; break;
+      case 'vendors': 
+        rows = vendors.map(v => {
+          const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
+          const totalBilled = vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+          return {
+            ...v,
+            total_business: `₹${totalBilled.toLocaleString('en-IN')}`
+          };
+        });
+        break;
     }
 
     if (masterQuery) {
@@ -685,6 +694,7 @@ const More = () => {
                   <div className="flex items-center space-x-3 text-xs text-slate-500">
                     {v?.phone && <span className="flex items-center"><Phone size={12} className="mr-1" /> {v.phone}</span>}
                     {v?.email && <span className="flex items-center"><Mail size={12} className="mr-1" /> {v.email}</span>}
+                    <span className="flex items-center font-semibold text-primary-600 ml-2 border-l pl-3 border-slate-200">Total Business: ₹{totalCredits.toLocaleString('en-IN')}</span>
                   </div>
                 </div>
 

@@ -150,17 +150,22 @@ const Reports = () => {
     const rows = [];
     budgetByCategory.forEach(cat => {
       rows.push({ Category: cat.name.toUpperCase(), Item: '', Qty: '', Unit: '', 'Unit Cost': '', Total: '' });
+      
       cat.items.forEach(item => {
-        const v = vendors.find(vend => vend.id === item.vendor_id);
-        rows.push({
-          Category: '',
-          Item: item.description,
-          Vendor: v ? v.name : 'Self',
-          Qty: item.quantity,
-          Unit: item.unit,
-          'Unit Cost': item.estimated_cost,
-          Total: Number(item.quantity || 1) * Number(item.estimated_cost || 0)
-        });
+        if (item.is_sub_header) {
+          rows.push({ Category: `  > ${item.description}`, Item: '', Qty: '', Unit: '', 'Unit Cost': '', Total: '' });
+        } else {
+          const v = vendors.find(vend => vend.id === item.vendor_id);
+          rows.push({
+            Category: '',
+            Item: item.description,
+            Vendor: v ? v.name : 'Self',
+            Qty: item.quantity,
+            Unit: item.unit,
+            'Unit Cost': item.estimated_cost,
+            Total: Number(item.quantity || 1) * Number(item.estimated_cost || 0)
+          });
+        }
       });
       rows.push({ Category: `Subtotal ${cat.name}`, Item: '', Qty: '', Unit: '', 'Unit Cost': '', Total: cat.subtotal });
     });
@@ -192,9 +197,12 @@ const Reports = () => {
         particular: 'Payment Received from Client' + (p.notes ? ` (${p.notes})` : ''),
         credit: Number(p.amount_received),
         debit: 0,
+        debit: 0,
         account: p.account || 'N/A',
         method: method ? method.name : 'N/A',
-        reference: p.reference_number || '-'
+        reference: p.reference_number || '-',
+        narration: p.narration || '',
+        sourceTable: 'client_payments'
       });
     });
 
@@ -214,9 +222,12 @@ const Reports = () => {
         particular: `Expense: ${cat ? cat.name : 'General'} (${vend ? vend.name : 'Self'}) - ${e.remarks || ''}`,
         credit: 0,
         debit: Number(e.amount),
+        debit: Number(e.amount),
         account: acc ? acc.name : 'N/A',
         method: method ? method.name : 'N/A',
-        reference: '-'
+        reference: '-',
+        narration: e.narration || '',
+        sourceTable: 'expenses'
       });
     });
 
@@ -235,9 +246,12 @@ const Reports = () => {
         particular: `Payment Out to Vendor: ${vend ? vend.name : 'Vendor'}`,
         credit: 0,
         debit: Number(vp.amount),
+        debit: Number(vp.amount),
         account: acc ? acc.name : 'N/A',
         method: method ? method.name : 'N/A',
-        reference: vp.reference_number || '-'
+        reference: vp.reference_number || '-',
+        narration: vp.narration || '',
+        sourceTable: 'vendor_payments'
       });
     });
 
@@ -260,6 +274,25 @@ const Reports = () => {
   const totalCredit = daybookTransactions.reduce((sum, t) => sum + t.credit, 0);
   const netDaybookBalance = totalCredit - totalDebit;
 
+  const handleUpdateNarration = async (id, sourceTable, newNarration) => {
+    try {
+      const { error } = await supabase.from(sourceTable).update({ narration: newNarration }).eq('id', id);
+      if (error) throw error;
+      
+      // Update local state
+      if (sourceTable === 'client_payments') {
+        setClientPayments(prev => prev.map(p => p.id === id ? { ...p, narration: newNarration } : p));
+      } else if (sourceTable === 'expenses') {
+        setExpenses(prev => prev.map(e => e.id === id ? { ...e, narration: newNarration } : e));
+      } else if (sourceTable === 'vendor_payments') {
+        setVendorPayments(prev => prev.map(vp => vp.id === id ? { ...vp, narration: newNarration } : vp));
+      }
+    } catch (err) {
+      console.error(err);
+      showNotification("Failed to save narration", "error");
+    }
+  };
+
   const handleExportDaybook = () => {
     const formatted = daybookTransactions.map(t => ({
       Date: t.date,
@@ -270,7 +303,8 @@ const Reports = () => {
       Credit: t.credit || '',
       Account: t.account,
       Method: t.method,
-      Reference: t.reference
+      Reference: t.reference,
+      Narration: t.narration
     }));
     exportExcel(formatted, "master_day_book");
   };
@@ -666,7 +700,8 @@ const Reports = () => {
                   <th className="py-2.5">Event Project</th>
                   <th className="py-2.5">Particular Details</th>
                   <th className="py-2.5 text-right w-24">Debit (Out)</th>
-                  <th className="py-2.5 text-right w-24">Credit (In)</th>
+                  <th className="py-2.5 text-right w-24">Cash Inflow (Cr)</th>
+                  <th className="py-2.5 pl-4 w-48">Narration</th>
                   <th className="py-2.5 w-32 pl-4">Account Used</th>
                   <th className="py-2.5 w-24">Method</th>
                 </tr>
@@ -687,6 +722,25 @@ const Reports = () => {
                       </td>
                       <td className="py-3 text-right font-bold text-green-600">
                         {tx.credit > 0 ? `₹${tx.credit.toLocaleString('en-IN')}` : ''}
+                      </td>
+                      <td className="py-2 pl-4">
+                        <input
+                          type="text"
+                          className="w-full bg-transparent hover:bg-slate-50 focus:bg-white border border-transparent hover:border-slate-200 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-sm"
+                          value={tx.narration}
+                          placeholder="Add notes..."
+                          onChange={(e) => {
+                            // Optimistic UI Update trick - we need to update state immediately to not lose focus
+                            if (tx.sourceTable === 'client_payments') {
+                              setClientPayments(prev => prev.map(p => p.id === tx.id ? { ...p, narration: e.target.value } : p));
+                            } else if (tx.sourceTable === 'expenses') {
+                              setExpenses(prev => prev.map(ex => ex.id === tx.id ? { ...ex, narration: e.target.value } : ex));
+                            } else if (tx.sourceTable === 'vendor_payments') {
+                              setVendorPayments(prev => prev.map(vp => vp.id === tx.id ? { ...vp, narration: e.target.value } : vp));
+                            }
+                          }}
+                          onBlur={(e) => handleUpdateNarration(tx.id, tx.sourceTable, e.target.value)}
+                        />
                       </td>
                       <td className="py-3 pl-4 font-medium text-slate-500">{tx.account}</td>
                       <td className="py-3 text-slate-500">{tx.method}</td>

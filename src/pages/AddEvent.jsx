@@ -25,8 +25,9 @@ const AddEvent = () => {
 
   const [eventForm, setEventForm] = useState({
     name: '',
+    start_date: '',
+    end_date: '',
     lead_source: '',
-    budget_estimated: '',
     budget_actual: ''
   });
 
@@ -130,11 +131,13 @@ const AddEvent = () => {
       // 2. Event Creation
       const { data: newEvent, error: eventErr } = await supabase.from('events').insert({
         name: eventForm.name,
+        start_date: eventForm.start_date || null,
+        end_date: eventForm.end_date || null,
         client_id: clientId,
         status: 'New Lead',
         lead_source_id: leadSourceId,
         sales_executive_id: null,
-        budget_estimated: Number(eventForm.budget_estimated || 0),
+        budget_estimated: 0, // Auto-calculated later from budget_items
         budget_actual: Number(eventForm.budget_actual || 0),
         amount_received: 0,
         amount_outstanding: Number(eventForm.budget_actual || 0)
@@ -333,6 +336,27 @@ const AddEvent = () => {
                   />
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Event Start Date</label>
+                    <input 
+                      type="date"
+                      className="input-field py-2 text-xs"
+                      value={eventForm.start_date}
+                      onChange={e => setEventForm({...eventForm, start_date: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Event End Date</label>
+                    <input 
+                      type="date"
+                      className="input-field py-2 text-xs"
+                      value={eventForm.end_date}
+                      onChange={e => setEventForm({...eventForm, end_date: e.target.value})}
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Lead Source</label>
                   <input 
@@ -344,7 +368,7 @@ const AddEvent = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3">
                   <div>
                     <label className="block text-xs font-semibold text-slate-600 mb-1">Closing Budget (₹)</label>
                     <div className="relative">
@@ -355,20 +379,6 @@ const AddEvent = () => {
                         className="input-field pl-9 py-2 text-xs"
                         value={eventForm.budget_actual}
                         onChange={e => setEventForm({...eventForm, budget_actual: e.target.value})}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Initial Estimated Budget (₹)</label>
-                    <div className="relative">
-                      <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                      <input 
-                        type="number" 
-                        placeholder="e.g. 350000"
-                        className="input-field pl-9 py-2 text-xs"
-                        value={eventForm.budget_estimated}
-                        onChange={e => setEventForm({...eventForm, budget_estimated: e.target.value})}
                       />
                     </div>
                   </div>

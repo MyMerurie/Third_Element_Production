@@ -13,7 +13,7 @@ const Sidebar = () => {
   return (
     <aside className="hidden md:flex flex-col w-64 bg-card border-r border-slate-200 h-screen fixed top-0 left-0">
       <div className="h-16 flex items-center px-6 border-b border-slate-100">
-        <h1 className="text-xl font-bold text-primary-600">Tridalam</h1>
+        <h1 className="text-xl font-bold text-primary-600">Third Element Production</h1>
       </div>
       <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
         {navItems.map((item) => (
@@ -21,10 +21,9 @@ const Sidebar = () => {
             key={item.to}
             to={item.to}
             className={({ isActive }) =>
-              `flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
-                isActive
-                  ? 'bg-primary-50 text-primary-600 font-medium'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+              `flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${isActive
+                ? 'bg-primary-50 text-primary-600 font-medium'
+                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
               }`
             }
           >
