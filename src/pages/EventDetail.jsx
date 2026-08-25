@@ -392,6 +392,10 @@ const EventDetail = () => {
     }
   };
 
+  const handleItemDragOver = (e) => {
+    e.preventDefault();
+  };
+
   const handleItemDragEnd = async () => {
     if (draggedItemIndex !== null && dragOverItemIndex !== null && draggedItemIndex !== dragOverItemIndex) {
       const catItems = budgetItems.filter(bi => bi.category_id === draggedItemCatId);
