@@ -334,7 +334,7 @@ const Reports = () => {
       const budgeted = budgetMap[cat.id] || 0;
       const actual = actualByCategory[cat.id] || 0;
       const difference = budgeted - actual;
-      const variancePercent = budgeted > 0 ? ((actual - budgeted) / budgeted) * 100 : 0;
+      const variancePercent = budgeted > 0 ? ((actual - budgeted) / budgeted) * 100 : (actual > 0 ? 100 : 0);
       
       let status = 'On Budget';
       if (difference < 0) status = 'Over Budget';
@@ -356,7 +356,7 @@ const Reports = () => {
   const bvsTotalBudget = bvsData.reduce((sum, item) => sum + item.budgeted, 0);
   const bvsTotalActual = bvsData.reduce((sum, item) => sum + item.actual, 0);
   const bvsTotalDiff = bvsTotalBudget - bvsTotalActual;
-  const bvsVariancePercent = bvsTotalBudget > 0 ? ((bvsTotalActual - bvsTotalBudget) / bvsTotalBudget) * 100 : 0;
+  const bvsVariancePercent = bvsTotalBudget > 0 ? ((bvsTotalActual - bvsTotalBudget) / bvsTotalBudget) * 100 : (bvsTotalActual > 0 ? 100 : 0);
 
   // Simple insights
   const overBudgetCats = bvsData.filter(i => i.status === 'Over Budget').sort((a, b) => a.difference - b.difference); // largest negative difference first
@@ -382,15 +382,11 @@ const Reports = () => {
   // ----------------------------------------------------
   const getProfitabilityData = () => {
     const eventStats = events.map(evt => {
-      // client payments for this event (Revenue)
-      const rev = clientPayments
-        .filter(p => p.event_id === evt.id)
-        .reduce((sum, p) => sum + Number(p.amount_received || 0), 0);
+      // closing budget for this event (Revenue)
+      const rev = Number(evt.budget_actual || 0);
 
-      // expenses for this event (Cost)
-      const cost = expenses
-        .filter(e => e.event_id === evt.id)
-        .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+      // actual cost for this event (Cost)
+      const cost = Number(evt.budget_actual_cost || 0);
 
       const netProfit = rev - cost;
       const profitMargin = rev > 0 ? (netProfit / rev) * 100 : 0;
@@ -792,7 +788,7 @@ const Reports = () => {
             <div className="card p-4 bg-slate-50 text-center">
               <span className="block text-[10px] text-slate-500 font-bold uppercase">Variance Diff</span>
               <span className={`text-lg font-bold ${bvsTotalDiff >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                ₹{bvsTotalDiff.toLocaleString('en-IN')}
+                {bvsTotalDiff >= 0 ? `₹${bvsTotalDiff.toLocaleString('en-IN')}` : `-₹${Math.abs(bvsTotalDiff).toLocaleString('en-IN')}`}
               </span>
             </div>
             <div className="card p-4 bg-slate-50 text-center">
@@ -828,7 +824,7 @@ const Reports = () => {
                       <td className="py-3 text-right">₹{item.budgeted.toLocaleString('en-IN')}</td>
                       <td className="py-3 text-right">₹{item.actual.toLocaleString('en-IN')}</td>
                       <td className={`py-3 text-right font-semibold ${item.difference >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        ₹{item.difference.toLocaleString('en-IN')}
+                        {item.difference >= 0 ? `₹${item.difference.toLocaleString('en-IN')}` : `-₹${Math.abs(item.difference).toLocaleString('en-IN')}`}
                       </td>
                       <td className="py-3 text-right font-medium">{item.variancePercent.toFixed(1)}%</td>
                       <td className="py-3 text-center">
@@ -964,7 +960,7 @@ const Reports = () => {
                       <td className="py-3 text-right">₹{evt.revenue.toLocaleString('en-IN')}</td>
                       <td className="py-3 text-right text-rose-600">₹{evt.expenses.toLocaleString('en-IN')}</td>
                       <td className={`py-3 text-right font-bold ${evt.profit >= 0 ? 'text-green-600' : 'text-rose-600'}`}>
-                        ₹{evt.profit.toLocaleString('en-IN')}
+                        {evt.profit >= 0 ? `₹${evt.profit.toLocaleString('en-IN')}` : `-₹${Math.abs(evt.profit).toLocaleString('en-IN')}`}
                       </td>
                       <td className="py-3 text-right font-bold text-slate-700">{evt.margin.toFixed(1)}%</td>
                       <td className="py-3 text-center">

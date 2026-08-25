@@ -21,11 +21,14 @@ const Dashboard = () => {
   const [expenses, setExpenses] = useState([]);
   const [vendorPayments, setVendorPayments] = useState([]);
   const [meetings, setMeetings] = useState([]);
+  const [budgetItems, setBudgetItems] = useState([]);
   
   // Masters
   const [accounts, setAccounts] = useState([]);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [showNewAccountInput, setShowNewAccountInput] = useState(''); // '', 'client_payment', 'vendor_payment', 'expense'
 
   // Modal States
   const [activeModal, setActiveModal] = useState(null); // 'client_payment', 'vendor_payment', 'expense', 'vendor'
@@ -75,6 +78,37 @@ const Dashboard = () => {
     setTimeout(() => setNotification(null), 4000);
   };
 
+  const handleAddNewAccount = async (targetForm) => {
+    if (!newAccountName.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('master_accounts')
+        .insert({ name: newAccountName.trim() })
+        .select();
+      
+      if (error) throw error;
+      if (data && data[0]) {
+        const newAcc = data[0];
+        setAccounts(prev => [...prev, newAcc]);
+        
+        if (targetForm === 'client_payment') {
+          setClientPaymentForm(prev => ({ ...prev, account_id: newAcc.id }));
+        } else if (targetForm === 'vendor_payment') {
+          setVendorPaymentForm(prev => ({ ...prev, account_id: newAcc.id }));
+        } else if (targetForm === 'expense') {
+          setExpenseForm(prev => ({ ...prev, account_id: newAcc.id }));
+        }
+        
+        setNewAccountName('');
+        setShowNewAccountInput('');
+        showNotification("Account added successfully!");
+      }
+    } catch (err) {
+      console.error(err);
+      showNotification("Failed to add account: " + err.message, "error");
+    }
+  };
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -88,7 +122,8 @@ const Dashboard = () => {
         resMeetings,
         resAccounts,
         resMethods,
-        resCategories
+        resCategories,
+        resBudgetItems
       ] = await Promise.all([
         supabase.from('events').select('*').order('created_at', { ascending: false }),
         supabase.from('clients').select('*'),
@@ -99,7 +134,8 @@ const Dashboard = () => {
         supabase.from('event_meetings').select('*').order('meeting_date', { ascending: true }),
         supabase.from('master_accounts').select('*'),
         supabase.from('master_payment_methods').select('*'),
-        supabase.from('master_expense_categories').select('*')
+        supabase.from('master_expense_categories').select('*'),
+        supabase.from('budget_items').select('*')
       ]);
 
       if (resEvents.data) setEvents(resEvents.data);
@@ -109,6 +145,7 @@ const Dashboard = () => {
       if (resExpenses.data) setExpenses(resExpenses.data);
       if (resVendorPayments.data) setVendorPayments(resVendorPayments.data);
       if (resMeetings.data) setMeetings(resMeetings.data);
+      if (resBudgetItems.data) setBudgetItems(resBudgetItems.data);
       
       if (resAccounts.data) setAccounts(resAccounts.data);
       if (resMethods.data) setPaymentMethods(resMethods.data);
@@ -159,9 +196,13 @@ const Dashboard = () => {
     .reduce((sum, e) => sum + Number(e.amount_outstanding || 0), 0);
 
   // Outstanding Vendor Payments
-  const totalVendorExpenses = expenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-  const totalVendorPayments = vendorPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const outstandingVendorPayments = totalVendorExpenses - totalVendorPayments;
+  const outstandingVendorPayments = vendors.reduce((sum, v) => {
+    const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
+    const totalBilled = vendBudgets.reduce((acc, b) => acc + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+    const totalPaid = vendorPayments.filter(p => p.vendor_id === v.id).reduce((acc, p) => acc + Number(p.amount || 0), 0);
+    const outstanding = totalBilled - totalPaid;
+    return sum + outstanding;
+  }, 0);
 
   // KPI cards display structure
   const kpiData = [
@@ -290,13 +331,16 @@ const Dashboard = () => {
 
       // Insert payment record
       const paymentAmount = Number(amount_received);
+      const selectedAcc = accounts.find(a => a.id === account_id);
+      const accountName = selectedAcc ? selectedAcc.name : '';
+
       const { error: insertError } = await supabase.from('client_payments').insert({
         event_id,
         client_id: selectedEvent.client_id,
         date,
         amount_received: paymentAmount,
         payment_method_id,
-        account_id,
+        account: accountName,
         reference_number
       });
 
@@ -735,14 +779,50 @@ const Dashboard = () => {
                       <select 
                         className="input-field py-2"
                         value={clientPaymentForm.account_id}
-                        onChange={e => setClientPaymentForm({...clientPaymentForm, account_id: e.target.value})}
+                        onChange={e => {
+                          if (e.target.value === 'ADD_NEW') {
+                            setShowNewAccountInput('client_payment');
+                            setClientPaymentForm({...clientPaymentForm, account_id: ''});
+                          } else {
+                            setClientPaymentForm({...clientPaymentForm, account_id: e.target.value});
+                          }
+                        }}
                         required
                       >
                         <option value="">-- Choose --</option>
                         {accounts.map(a => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
+                        <option value="ADD_NEW">+ Add New Account</option>
                       </select>
+                      {showNewAccountInput === 'client_payment' && (
+                        <div className="mt-2 flex items-center space-x-2">
+                          <input 
+                            type="text" 
+                            className="input-field py-1 text-xs flex-1" 
+                            placeholder="New account name" 
+                            value={newAccountName}
+                            onChange={e => setNewAccountName(e.target.value)}
+                          />
+                          <button 
+                            type="button" 
+                            onClick={() => handleAddNewAccount('client_payment')}
+                            className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Add
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setShowNewAccountInput('');
+                              setNewAccountName('');
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -838,14 +918,50 @@ const Dashboard = () => {
                       <select 
                         className="input-field py-2"
                         value={vendorPaymentForm.account_id}
-                        onChange={e => setVendorPaymentForm({...vendorPaymentForm, account_id: e.target.value})}
+                        onChange={e => {
+                          if (e.target.value === 'ADD_NEW') {
+                            setShowNewAccountInput('vendor_payment');
+                            setVendorPaymentForm({...vendorPaymentForm, account_id: ''});
+                          } else {
+                            setVendorPaymentForm({...vendorPaymentForm, account_id: e.target.value});
+                          }
+                        }}
                         required
                       >
                         <option value="">-- Choose --</option>
                         {accounts.map(a => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
+                        <option value="ADD_NEW">+ Add New Account</option>
                       </select>
+                      {showNewAccountInput === 'vendor_payment' && (
+                        <div className="mt-2 flex items-center space-x-2">
+                          <input 
+                            type="text" 
+                            className="input-field py-1 text-xs flex-1" 
+                            placeholder="New account name" 
+                            value={newAccountName}
+                            onChange={e => setNewAccountName(e.target.value)}
+                          />
+                          <button 
+                            type="button" 
+                            onClick={() => handleAddNewAccount('vendor_payment')}
+                            className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Add
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setShowNewAccountInput('');
+                              setNewAccountName('');
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -956,14 +1072,50 @@ const Dashboard = () => {
                       <select 
                         className="input-field py-2"
                         value={expenseForm.account_id}
-                        onChange={e => setExpenseForm({...expenseForm, account_id: e.target.value})}
+                        onChange={e => {
+                          if (e.target.value === 'ADD_NEW') {
+                            setShowNewAccountInput('expense');
+                            setExpenseForm({...expenseForm, account_id: ''});
+                          } else {
+                            setExpenseForm({...expenseForm, account_id: e.target.value});
+                          }
+                        }}
                         required
                       >
                         <option value="">-- Choose --</option>
                         {accounts.map(a => (
                           <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
+                        <option value="ADD_NEW">+ Add New Account</option>
                       </select>
+                      {showNewAccountInput === 'expense' && (
+                        <div className="mt-2 flex items-center space-x-2">
+                          <input 
+                            type="text" 
+                            className="input-field py-1 text-xs flex-1" 
+                            placeholder="New account name" 
+                            value={newAccountName}
+                            onChange={e => setNewAccountName(e.target.value)}
+                          />
+                          <button 
+                            type="button" 
+                            onClick={() => handleAddNewAccount('expense')}
+                            className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Add
+                          </button>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setShowNewAccountInput('');
+                              setNewAccountName('');
+                            }}
+                            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div>

@@ -32,6 +32,8 @@ const More = () => {
   // Master Lists Configuration State
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [showNewAccountInput, setShowNewAccountInput] = useState(''); // '', 'client_payment', 'vendor_payment', 'vendor_expense'
   const [methods, setMethods] = useState([]);
   const [staff, setStaff] = useState([]);
   const [leadSources, setLeadSources] = useState([]);
@@ -91,6 +93,37 @@ const More = () => {
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleAddNewAccount = async (targetForm) => {
+    if (!newAccountName.trim()) return;
+    try {
+      const { data, error } = await supabase
+        .from('master_accounts')
+        .insert({ name: newAccountName.trim() })
+        .select();
+      
+      if (error) throw error;
+      if (data && data[0]) {
+        const newAcc = data[0];
+        setAccounts(prev => [...prev, newAcc]);
+        
+        if (targetForm === 'client_payment') {
+          setPaymentForm(prev => ({ ...prev, account: newAcc.name }));
+        } else if (targetForm === 'vendor_payment') {
+          setPaymentForm(prev => ({ ...prev, account_id: newAcc.id }));
+        } else if (targetForm === 'vendor_expense') {
+          setVendorExpenseForm(prev => ({ ...prev, account_id: newAcc.id }));
+        }
+        
+        setNewAccountName('');
+        setShowNewAccountInput('');
+        showNotification("Account added successfully!");
+      }
+    } catch (err) {
+      console.error(err);
+      showNotification("Failed to add account: " + err.message, "error");
+    }
   };
 
   const loadAllData = async () => {
@@ -702,7 +735,9 @@ const More = () => {
                   <div className="flex items-center gap-4 bg-slate-50 border p-3 rounded-xl">
                     <div className="text-center">
                       <span className="block text-[10px] text-slate-500 uppercase">Outstanding</span>
-                      <span className="text-md font-bold text-red-600">₹{totalBal.toLocaleString('en-IN')}</span>
+                      <span className="text-md font-bold text-red-600">
+                        {totalBal >= 0 ? `₹${totalBal.toLocaleString('en-IN')}` : `-₹${Math.abs(totalBal).toLocaleString('en-IN')}`}
+                      </span>
                     </div>
                     <button 
                       onClick={() => {
@@ -1038,7 +1073,8 @@ const More = () => {
 
         // Payables: vendor ledger rows where outstanding > 0
         const vendorPayables = vendors.map(v => {
-          const totalBilled = expenses.filter(e => e.vendor_id === v.id).reduce((sum, e) => sum + Number(e.amount || 0), 0);
+          const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
+          const totalBilled = vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
           const totalPaid = vendorPayments.filter(p => p.vendor_id === v.id).reduce((sum, p) => sum + Number(p.amount || 0), 0);
           return {
             ...v,
@@ -1361,26 +1397,101 @@ const More = () => {
                 <div>
                   <label className="block font-semibold text-slate-600 mb-1">Financial Account *</label>
                   {paymentType === 'client' ? (
-                    <input 
-                      type="text"
+                    <select 
                       className="input-field py-2 text-xs"
-                      placeholder="e.g. HDFC Bank, Petty Cash"
                       value={paymentForm.account || ''}
-                      onChange={e => setPaymentForm({...paymentForm, account: e.target.value})}
+                      onChange={e => {
+                        if (e.target.value === 'ADD_NEW') {
+                          setShowNewAccountInput('client_payment');
+                          setPaymentForm({...paymentForm, account: ''});
+                        } else {
+                          setPaymentForm({...paymentForm, account: e.target.value});
+                        }
+                      }}
                       required
-                    />
+                    >
+                      <option value="">-- Choose Account --</option>
+                      {accounts.map(a => (
+                        <option key={a.id} value={a.name}>{a.name}</option>
+                      ))}
+                      <option value="ADD_NEW">+ Add New Account</option>
+                    </select>
                   ) : (
                     <select 
                       className="input-field py-2 text-xs"
                       value={paymentForm.account_id}
-                      onChange={e => setPaymentForm({...paymentForm, account_id: e.target.value})}
+                      onChange={e => {
+                        if (e.target.value === 'ADD_NEW') {
+                          setShowNewAccountInput('vendor_payment');
+                          setPaymentForm({...paymentForm, account_id: ''});
+                        } else {
+                          setPaymentForm({...paymentForm, account_id: e.target.value});
+                        }
+                      }}
                       required
                     >
                       <option value="">-- Choose Account --</option>
                       {accounts.map(a => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
+                      <option value="ADD_NEW">+ Add New Account</option>
                     </select>
+                  )}
+                  {showNewAccountInput === 'client_payment' && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <input 
+                        type="text" 
+                        className="input-field py-1 text-xs flex-1" 
+                        placeholder="New account name" 
+                        value={newAccountName}
+                        onChange={e => setNewAccountName(e.target.value)}
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => handleAddNewAccount('client_payment')}
+                        className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Add
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          setShowNewAccountInput('');
+                          setNewAccountName('');
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  {showNewAccountInput === 'vendor_payment' && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <input 
+                        type="text" 
+                        className="input-field py-1 text-xs flex-1" 
+                        placeholder="New account name" 
+                        value={newAccountName}
+                        onChange={e => setNewAccountName(e.target.value)}
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => handleAddNewAccount('vendor_payment')}
+                        className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Add
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          setShowNewAccountInput('');
+                          setNewAccountName('');
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1698,13 +1809,49 @@ const More = () => {
                   <select 
                     className="input-field py-2 text-xs"
                     value={vendorExpenseForm.account_id}
-                    onChange={e => setVendorExpenseForm({...vendorExpenseForm, account_id: e.target.value || ''})}
+                    onChange={e => {
+                      if (e.target.value === 'ADD_NEW') {
+                        setShowNewAccountInput('vendor_expense');
+                        setVendorExpenseForm({...vendorExpenseForm, account_id: ''});
+                      } else {
+                        setVendorExpenseForm({...vendorExpenseForm, account_id: e.target.value || ''});
+                      }
+                    }}
                   >
                     <option value="">-- None (Unpaid Invoice) --</option>
                     {accounts.map(a => (
                       <option key={a.id} value={a.id}>{a.name}</option>
                     ))}
+                    <option value="ADD_NEW">+ Add New Account</option>
                   </select>
+                  {showNewAccountInput === 'vendor_expense' && (
+                    <div className="mt-2 flex items-center space-x-2">
+                      <input 
+                        type="text" 
+                        className="input-field py-1 text-xs flex-1" 
+                        placeholder="New account name" 
+                        value={newAccountName}
+                        onChange={e => setNewAccountName(e.target.value)}
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => handleAddNewAccount('vendor_expense')}
+                        className="bg-primary-600 hover:bg-primary-700 text-white font-semibold px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Add
+                      </button>
+                      <button 
+                        type="button" 
+                        onClick={() => {
+                          setShowNewAccountInput('');
+                          setNewAccountName('');
+                        }}
+                        className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded text-xs cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
