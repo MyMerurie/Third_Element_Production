@@ -599,7 +599,7 @@ const More = () => {
                 <span className="text-xl font-extrabold text-rose-750 mt-1">₹{totalOutstandingAll.toLocaleString('en-IN')}</span>
               </div>
               <div className="card p-4 bg-slate-50/85 border-slate-200 flex flex-col justify-between shadow-sm">
-                <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total Purchases</span>
+                <span className="block text-[10px] text-slate-500 font-bold uppercase tracking-wider">Total Billing</span>
                 <span className="text-xl font-bold text-slate-700 mt-1">₹{totalBilledAll.toLocaleString('en-IN')}</span>
               </div>
               <div className="card p-4 bg-green-50/60 border-green-200 flex flex-col justify-between shadow-sm">

@@ -44,6 +44,9 @@ const EventDetail = () => {
   const [leadSources, setLeadSources] = useState([]);
   const [newAccountName, setNewAccountName] = useState('');
   const [showNewAccountInput, setShowNewAccountInput] = useState(''); // '', 'client_payment', 'vendor_payment', 'expense'
+  const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+  const [dragOverItemIndex, setDragOverItemIndex] = useState(null);
+  const [draggedItemCatId, setDraggedItemCatId] = useState(null);
 
   // Modal & Edit States
   const [activeModal, setActiveModal] = useState(null); // 'meeting', 'expense', 'client_payment', 'vendor_payment', 'note', 'ceremony'
@@ -207,7 +210,7 @@ const EventDetail = () => {
       if (resClientPay.data) setClientPayments(resClientPay.data);
       if (resVendorPay.data) setVendorPayments(resVendorPay.data);
       
-      if (resVendors.data) setVendors(resVendors.data);
+      if (resVendors.data) setVendors([...resVendors.data].sort((a, b) => a.name.localeCompare(b.name)));
       if (resStaff.data) setStaff(resStaff.data);
       if (resAccounts.data) setAccounts(resAccounts.data);
       if (resMethods.data) setPaymentMethods(resMethods.data);
@@ -370,6 +373,58 @@ const EventDetail = () => {
     }
     setDraggedCatIndex(null);
     setDragOverCatIndex(null);
+  };
+
+  const handleItemDragStart = (e, index, catId) => {
+    if (!e.target.closest('.drag-handle')) {
+      e.preventDefault();
+      return;
+    }
+    setDraggedItemIndex(index);
+    setDraggedItemCatId(catId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleItemDragEnter = (e, index, catId) => {
+    e.preventDefault();
+    if (catId === draggedItemCatId) {
+      setDragOverItemIndex(index);
+    }
+  };
+
+  const handleItemDragEnd = async () => {
+    if (draggedItemIndex !== null && dragOverItemIndex !== null && draggedItemIndex !== dragOverItemIndex) {
+      const catItems = budgetItems.filter(bi => bi.category_id === draggedItemCatId);
+      const otherItems = budgetItems.filter(bi => bi.category_id !== draggedItemCatId);
+      
+      const newCatItems = [...catItems];
+      const draggedItem = newCatItems[draggedItemIndex];
+      
+      newCatItems.splice(draggedItemIndex, 1);
+      newCatItems.splice(dragOverItemIndex, 0, draggedItem);
+      
+      const updatedBudgetItems = [...otherItems, ...newCatItems];
+      setBudgetItems(updatedBudgetItems);
+      
+      try {
+        const baseTime = new Date().getTime() - 10 * 365 * 24 * 3600 * 1000;
+        const updates = newCatItems.map((item, idx) => ({
+          id: item.id,
+          created_at: new Date(baseTime + idx * 1000).toISOString()
+        }));
+        
+        await Promise.all(
+          updates.map(update => 
+            supabase.from('budget_items').update({ created_at: update.created_at }).eq('id', update.id)
+          )
+        );
+      } catch (err) {
+        console.error("Failed to update item order:", err);
+      }
+    }
+    setDraggedItemIndex(null);
+    setDragOverItemIndex(null);
+    setDraggedItemCatId(null);
   };
 
   // OVERVIEW TAB: Save handler
@@ -1708,7 +1763,8 @@ const EventDetail = () => {
                       <table className="w-full text-left border-collapse min-w-[800px]">
                         <thead>
                           <tr className="border-b border-slate-200 text-[10px] text-slate-400 uppercase tracking-wider">
-                            <th className="py-2 pl-2">Description</th>
+                            <th className="py-2 w-6 pl-2"></th>
+                            <th className="py-2 pl-1">Description</th>
                             <th className="py-2 w-32">Assign Vendor</th>
                             <th className="py-2 w-32">Ceremony</th>
                             <th className="py-2 w-20 text-center">Qty</th>
@@ -1721,112 +1777,149 @@ const EventDetail = () => {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                          {catItems.map((item) => (
-                            <React.Fragment key={item.id}>
-                              {item.is_sub_header ? (
-                                <tr className="bg-slate-100/60 border-t border-b border-slate-200">
-                                  <td colSpan="10" className="py-2 pl-3">
-                                    <input 
-                                      type="text" 
-                                      value={item.description || ''} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
-                                      className="w-full bg-transparent hover:bg-white focus:bg-white rounded px-2 py-1 outline-none font-bold text-slate-700 uppercase tracking-widest text-[10px] transition-all"
-                                      placeholder="Sub Header Name..."
-                                    />
-                                  </td>
-                                  <td className="py-2 w-10 text-center border-l border-slate-200/50">
-                                    <button 
-                                      onClick={() => handleDeleteBudgetItem(item.id)}
-                                      className="text-slate-400 hover:text-red-600 p-1"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                                    </button>
-                                  </td>
-                                </tr>
-                              ) : (
-                                <tr className="hover:bg-slate-50/50">
-                                  <td className="py-2 pl-2">
-                                    <input 
-                                      type="text" 
-                                      value={item.description || ''} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none font-medium transition-all"
-                                    />
-                                  </td>
-                                  <td className="py-2 w-32 px-1">
-                                    <select
-                                      value={item.vendor_id || ''}
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'vendor_id', e.target.value || null)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer"
-                                    >
-                                      <option value="">-- Unassigned --</option>
-                                      {vendors.map(v => (
-                                        <option key={v.id} value={v.id}>{v.name}</option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="py-2 w-32 px-1">
-                                    <select
-                                      value={item.function_id || ''}
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'function_id', e.target.value || null)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer text-xs"
-                                    >
-                                      <option value="">General Costs</option>
-                                      {functions.map(f => (
-                                        <option key={f.id} value={f.id}>{f.name}</option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="py-2 w-20 px-1">
-                                    <input 
-                                      type="number" 
-                                      value={item.quantity === null ? '' : item.quantity} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'quantity', e.target.value)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-center"
-                                    />
-                                  </td>
-                                  <td className="py-2 w-20 px-1">
-                                    <input 
-                                      type="text" 
-                                      value={item.unit || ''} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'unit', e.target.value)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all"
-                                    />
-                                  </td>
-                                  <td className="py-2 w-24 px-1">
-                                    <input 
-                                      type="number" 
-                                      value={item.estimated_cost === null ? '' : item.estimated_cost} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'estimated_cost', e.target.value)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
-                                    />
-                                  </td>
-                                  <td className="py-2 w-24 text-right font-bold text-slate-700">
-                                    ₹{(Number(item.quantity || 1) * Number(item.estimated_cost || 0)).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="py-2 w-24 px-1">
-                                    <input 
-                                      type="number" 
-                                      value={item.actual_cost === null ? '' : item.actual_cost} 
-                                      onChange={e => handleUpdateBudgetItemInline(item.id, 'actual_cost', e.target.value)}
-                                      className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right"
-                                    />
-                                  </td>
-                                  <td className="py-2 w-24 text-right pr-2 font-bold text-slate-800">
-                                    ₹{(Number(item.quantity || 1) * Number(item.actual_cost || 0)).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="py-2 w-10 text-center">
-                                    <button 
-                                      onClick={() => handleDeleteBudgetItem(item.id)}
-                                      className="text-slate-400 hover:text-red-600"
-                                    >
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-                                    </button>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          ))}
+                          {catItems.map((item, itemIdx) => {
+                            const isItemDragging = draggedItemCatId === cat.id && draggedItemIndex === itemIdx;
+                            const isItemDragOver = draggedItemCatId === cat.id && dragOverItemIndex === itemIdx;
+
+                            return (
+                              <React.Fragment key={item.id}>
+                                {item.is_sub_header ? (
+                                  <tr 
+                                    draggable
+                                    onDragStart={(e) => handleItemDragStart(e, itemIdx, cat.id)}
+                                    onDragEnter={(e) => handleItemDragEnter(e, itemIdx, cat.id)}
+                                    onDragOver={handleItemDragOver}
+                                    onDragEnd={handleItemDragEnd}
+                                    className={`bg-slate-100/60 border-t border-b border-slate-200 transition-all duration-150 ${
+                                      isItemDragging ? 'opacity-40 bg-primary-50/50' : 'opacity-100'
+                                    } ${
+                                      isItemDragOver && draggedItemIndex !== itemIdx ? 'bg-primary-50/80' : ''
+                                    }`}
+                                  >
+                                    <td className="py-2 pl-2 w-6 text-center">
+                                      <div className="drag-handle text-slate-400 hover:text-slate-650 cursor-grab px-0.5">
+                                        <svg width="10" height="16" viewBox="0 0 12 20" fill="currentColor"><path d="M4 4c0-1.1-.9-2-2-2S0 2.9 0 4s.9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2z"/></svg>
+                                      </div>
+                                    </td>
+                                    <td colSpan="9" className="py-2 pl-1">
+                                      <input 
+                                        type="text" 
+                                        value={item.description || ''} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
+                                        className="w-full bg-transparent hover:bg-white focus:bg-white rounded px-2 py-1 outline-none font-bold text-slate-700 uppercase tracking-widest text-[10px] transition-all"
+                                        placeholder="Sub Header Name..."
+                                      />
+                                    </td>
+                                    <td className="py-2 w-10 text-center border-l border-slate-200/50">
+                                      <button 
+                                        onClick={() => handleDeleteBudgetItem(item.id)}
+                                        className="text-slate-400 hover:text-red-600 p-1"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  <tr 
+                                    draggable
+                                    onDragStart={(e) => handleItemDragStart(e, itemIdx, cat.id)}
+                                    onDragEnter={(e) => handleItemDragEnter(e, itemIdx, cat.id)}
+                                    onDragOver={handleItemDragOver}
+                                    onDragEnd={handleItemDragEnd}
+                                    className={`hover:bg-slate-50/50 transition-all duration-150 ${
+                                      isItemDragging ? 'opacity-40 bg-primary-50/50' : 'opacity-100'
+                                    } ${
+                                      isItemDragOver && draggedItemIndex !== itemIdx ? 'bg-primary-50/85' : ''
+                                    }`}
+                                  >
+                                    <td className="py-2 pl-2 w-6 text-center">
+                                      <div className="drag-handle text-slate-350 hover:text-slate-500 cursor-grab px-0.5">
+                                        <svg width="10" height="16" viewBox="0 0 12 20" fill="currentColor"><path d="M4 4c0-1.1-.9-2-2-2S0 2.9 0 4s.9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-8 6c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm8 0c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2z"/></svg>
+                                      </div>
+                                    </td>
+                                    <td className="py-2 pl-1">
+                                      <input 
+                                        type="text" 
+                                        value={item.description || ''} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'description', e.target.value)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none font-medium transition-all"
+                                      />
+                                    </td>
+                                    <td className="py-2 w-32 px-1">
+                                      <select
+                                        value={item.vendor_id || ''}
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'vendor_id', e.target.value || null)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer text-xs"
+                                      >
+                                        <option value="">-- Unassigned --</option>
+                                        {vendors.map(v => (
+                                          <option key={v.id} value={v.id}>{v.name}</option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="py-2 w-32 px-1">
+                                      <select
+                                        value={item.function_id || ''}
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'function_id', e.target.value || null)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all cursor-pointer text-xs"
+                                      >
+                                        <option value="">General Costs</option>
+                                        {functions.map(f => (
+                                          <option key={f.id} value={f.id}>{f.name}</option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                    <td className="py-2 w-20 px-1">
+                                      <input 
+                                        type="number" 
+                                        value={item.quantity === null ? '' : item.quantity} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'quantity', e.target.value)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-center text-xs"
+                                      />
+                                    </td>
+                                    <td className="py-2 w-20 px-1">
+                                      <input 
+                                        type="text" 
+                                        value={item.unit || ''} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'unit', e.target.value)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-xs"
+                                      />
+                                    </td>
+                                    <td className="py-2 w-24 px-1">
+                                      <input 
+                                        type="number" 
+                                        value={item.estimated_cost === null ? '' : item.estimated_cost} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'estimated_cost', e.target.value)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right text-xs"
+                                      />
+                                    </td>
+                                    <td className="py-2 w-24 text-right font-bold text-slate-700 text-xs">
+                                      ₹{(Number(item.quantity || 1) * Number(item.estimated_cost || 0)).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="py-2 w-24 px-1">
+                                      <input 
+                                        type="number" 
+                                        value={item.actual_cost === null ? '' : item.actual_cost} 
+                                        onChange={e => handleUpdateBudgetItemInline(item.id, 'actual_cost', e.target.value)}
+                                        className="w-full bg-slate-50/40 hover:bg-slate-100/60 focus:bg-white border border-slate-200/50 focus:border-primary-500 rounded px-2 py-1 outline-none transition-all text-right text-xs"
+                                      />
+                                    </td>
+                                    <td className="py-2 w-24 text-right pr-2 font-bold text-slate-800 text-xs">
+                                      ₹{(Number(item.quantity || 1) * Number(item.actual_cost || 0)).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="py-2 w-10 text-center">
+                                      <button 
+                                        onClick={() => handleDeleteBudgetItem(item.id)}
+                                        className="text-slate-400 hover:text-red-600"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                      </button>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
                         </tbody>
                       </table>
                       
