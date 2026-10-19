@@ -6,7 +6,7 @@ import {
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import { useNavigate } from 'react-router-dom';
-import { Truck, Package, Receipt } from 'lucide-react';
+import { Truck, Package, Receipt, CalendarDays } from 'lucide-react';
 import { uploadFile } from '../lib/storage';
 
 const formatDate = (dateString) => {
@@ -195,6 +195,7 @@ const More = () => {
     { id: 'client_ledger', icon: <Users size={20} />, label: 'Client Ledger', desc: 'Manage client invoices, schedules, and inflow receipts' },
     { id: 'rentals', to: '/rentals', icon: <Truck size={20} />, label: 'Rentals', desc: 'Rental bookings, pick-up/return dates and invoices' },
     { id: 'inventory', to: '/inventory', icon: <Package size={20} />, label: 'Inventory', desc: 'Product codes, stock, pricing, images and condition' },
+    { id: 'calendar', to: '/calendar', icon: <CalendarDays size={20} />, label: 'Calendar', desc: 'Event functions, meetings, rentals and overheads by date' },
     { id: 'overheads', to: '/overheads', icon: <Receipt size={20} />, label: 'Overheads', desc: 'Fixed expenses, salaries and calendar' },
     { id: 'outstanding', icon: <FileText size={20} />, label: 'Outstanding Payments', desc: 'Central view of overdue receivables and payables' },
     { id: 'masters', icon: <Settings size={20} />, label: 'Master Lists Configurator', desc: 'Add, edit, or delete reference options' },

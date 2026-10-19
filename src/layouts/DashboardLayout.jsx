@@ -15,6 +15,7 @@ const getTitleFromPath = (path) => {
   if (path === '/rentals') return 'Rentals';
   if (path === '/inventory') return 'Inventory';
   if (path === '/overheads') return 'Overheads';
+  if (path === '/calendar') return 'Calendar';
   return 'Dashboard';
 };
 

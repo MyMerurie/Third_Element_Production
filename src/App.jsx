@@ -11,6 +11,7 @@ import Login from './pages/Login';
 import Rentals from './pages/Rentals';
 import Inventory from './pages/Inventory';
 import Overheads from './pages/Overheads';
+import Calendar from './pages/Calendar';
 
 const SESSION_KEY = 'tep_auth';
 
@@ -42,6 +43,7 @@ function App() {
           <Route path="reports" element={<Reports />} />
           <Route path="rentals" element={<Rentals />} />
           <Route path="inventory" element={<Inventory />} />
+          <Route path="calendar" element={<Calendar />} />
           <Route path="overheads" element={<Overheads />} />
           <Route path="more" element={<More />} />
         </Route>

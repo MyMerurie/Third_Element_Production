@@ -8,7 +8,7 @@ const CATEGORIES = [
 ];
 const PARTNER_SALARY = 'Partner Salary';
 const LABOUR_SALARY = 'Labour Salary';
-const TABS = ['Calendar', 'Fixed Expenses', 'Partner Salaries', 'Labour Salaries'];
+const TABS = ['Fixed Expenses', 'Partner Salaries', 'Labour Salaries'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN')}`;
@@ -18,33 +18,24 @@ const monthKey = (d) => d.slice(0, 7);
 
 const Overheads = () => {
   const now = new Date();
-  const [tab, setTab] = useState('Calendar');
+  const [tab, setTab] = useState('Fixed Expenses');
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [rows, setRows] = useState([]);
-  const [functions, setFunctions] = useState([]);
-  const [rentals, setRentals] = useState([]);
-  const [selectedDay, setSelectedDay] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
 
   const load = async () => {
-    const [o, f, r] = await Promise.all([
-      supabase.from('overhead_expenses').select('*').order('date', { ascending: false }),
-      supabase.from('event_functions').select('id,name,function_date,venue'),
-      supabase.from('rentals').select('id,customer_name,pickup_date,return_date'),
-    ]);
+    const o = await supabase.from('overhead_expenses').select('*').order('date', { ascending: false });
     if (o.error) setError(o.error.message);
     setRows(o.data || []);
-    setFunctions(f.data || []);
-    setRentals(r.data || []);
   };
   useEffect(() => { load(); }, []);
 
   const shiftMonth = (delta) => {
     const d = new Date(year, month + delta, 1);
-    setYear(d.getFullYear()); setMonth(d.getMonth()); setSelectedDay(null);
+    setYear(d.getFullYear()); setMonth(d.getMonth());
   };
 
   const openAdd = (category, defaults = {}) => {
@@ -70,21 +61,6 @@ const Overheads = () => {
   const mk = `${year}-${String(month + 1).padStart(2, '0')}`;
   const monthRows = rows.filter(r => monthKey(r.date) === mk);
   const monthTotal = monthRows.reduce((s, r) => s + Number(r.amount || 0), 0);
-
-  // ---- Calendar ----
-  const firstDow = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = [...Array(firstDow).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
-  const dayData = (day) => {
-    const d = iso(year, month, day);
-    return {
-      expenses: rows.filter(r => r.date === d),
-      funcs: functions.filter(f => f.function_date === d),
-      pickups: rentals.filter(r => r.pickup_date === d),
-      returns: rentals.filter(r => r.return_date === d),
-    };
-  };
-  const sel = selectedDay ? dayData(selectedDay) : null;
 
   const MonthNav = () => (
     <div className="flex items-center gap-2">
@@ -161,56 +137,6 @@ const Overheads = () => {
       </div>
 
       {error && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-xs">{error} — has <code>supabase_migration_phase2.sql</code> been run?</div>}
-
-      {tab === 'Calendar' && (
-        <div className="space-y-3">
-          <div className="card bg-white p-3">
-            <div className="grid grid-cols-[repeat(7,minmax(0,1fr))] text-center text-[10px] font-bold uppercase text-slate-400 pb-2">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d}>{d}</div>)}
-            </div>
-            <div className="grid grid-cols-[repeat(7,minmax(0,1fr))] gap-1">
-              {cells.map((day, i) => {
-                if (!day) return <div key={i} />;
-                const d = dayData(day);
-                const total = d.expenses.reduce((s, r) => s + Number(r.amount || 0), 0);
-                const isToday = iso(year, month, day) === iso(now.getFullYear(), now.getMonth(), now.getDate());
-                return (
-                  <button key={i} onClick={() => setSelectedDay(day)}
-                    className={`min-w-0 overflow-hidden min-h-[56px] sm:min-h-[84px] p-1 rounded-lg border text-left align-top cursor-pointer hover:border-primary-300 ${selectedDay === day ? 'border-primary-500 bg-primary-50' : 'border-slate-100'} ${isToday ? 'ring-1 ring-primary-300' : ''}`}>
-                    <span className={`text-[11px] font-bold ${isToday ? 'text-primary-600' : 'text-slate-600'}`}>{day}</span>
-                    <div className="space-y-0.5 mt-0.5">
-                      {total > 0 && <div className="text-[9px] leading-tight rounded px-1 bg-rose-50 text-rose-700 truncate">{inr(total)}</div>}
-                      {d.funcs.length > 0 && <div className="text-[9px] leading-tight rounded px-1 bg-indigo-50 text-indigo-700 truncate">{d.funcs.length} function{d.funcs.length > 1 ? 's' : ''}</div>}
-                      {d.pickups.length > 0 && <div className="text-[9px] leading-tight rounded px-1 bg-green-50 text-green-700 truncate">Pick-up {d.pickups.length}</div>}
-                      {d.returns.length > 0 && <div className="text-[9px] leading-tight rounded px-1 bg-amber-50 text-amber-700 truncate">Return {d.returns.length}</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex flex-wrap gap-3 text-[10px] text-slate-500 pt-3">
-              <span><i className="inline-block w-2 h-2 rounded bg-rose-300 mr-1" />Overheads</span>
-              <span><i className="inline-block w-2 h-2 rounded bg-indigo-300 mr-1" />Event functions</span>
-              <span><i className="inline-block w-2 h-2 rounded bg-green-300 mr-1" />Rental pick-up</span>
-              <span><i className="inline-block w-2 h-2 rounded bg-amber-300 mr-1" />Rental return</span>
-            </div>
-          </div>
-
-          {sel && (
-            <div className="card bg-white p-4 text-xs space-y-2">
-              <div className="flex justify-between items-center">
-                <h4 className="font-bold text-slate-800">{fmtDate(iso(year, month, selectedDay))}</h4>
-                <button onClick={() => openAdd(CATEGORIES[0], { date: iso(year, month, selectedDay) })} className="btn-primary py-1 px-2.5 text-[10px] flex items-center gap-1 cursor-pointer"><Plus size={10} /> Add expense</button>
-              </div>
-              {sel.expenses.map(r => <div key={r.id} className="flex justify-between"><span>{r.category}{r.payee ? ` – ${r.payee}` : ''}</span><b>{inr(r.amount)}</b></div>)}
-              {sel.funcs.map(f => <div key={f.id} className="text-indigo-700">Function: {f.name}{f.venue ? ` @ ${f.venue}` : ''}</div>)}
-              {sel.pickups.map(r => <div key={r.id} className="text-green-700">Rental pick-up: {r.customer_name}</div>)}
-              {sel.returns.map(r => <div key={r.id} className="text-amber-700">Rental return: {r.customer_name}</div>)}
-              {!sel.expenses.length && !sel.funcs.length && !sel.pickups.length && !sel.returns.length && <p className="text-slate-400">Nothing scheduled.</p>}
-            </div>
-          )}
-        </div>
-      )}
 
       {tab === 'Fixed Expenses' && (
         <div className="space-y-3">
