@@ -1,11 +1,14 @@
 import React from 'react';
 import { NavLink, Link } from 'react-router-dom';
-import { Home, Calendar, PlusCircle, FileText, MoreHorizontal } from 'lucide-react';
+import { Home, Calendar, PlusCircle, FileText, MoreHorizontal, Truck, Package, Receipt } from 'lucide-react';
 
 const Sidebar = () => {
   const navItems = [
     { to: '/', icon: <Home size={20} />, label: 'Dashboard' },
     { to: '/events', icon: <Calendar size={20} />, label: 'Events' },
+    { to: '/rentals', icon: <Truck size={20} />, label: 'Rentals' },
+    { to: '/inventory', icon: <Package size={20} />, label: 'Inventory' },
+    { to: '/overheads', icon: <Receipt size={20} />, label: 'Overheads' },
     { to: '/reports', icon: <FileText size={20} />, label: 'Reports' },
     { to: '/more', icon: <MoreHorizontal size={20} />, label: 'More' },
   ];

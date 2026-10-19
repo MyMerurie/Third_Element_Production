@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import BottomNav from '../components/BottomNav';
 import Topbar from '../components/Topbar';
+import useStackedTables from '../lib/useStackedTables';
 
 const getTitleFromPath = (path) => {
   if (path === '/') return 'Dashboard';
@@ -11,6 +12,9 @@ const getTitleFromPath = (path) => {
   if (path === '/add') return 'New Event';
   if (path === '/reports') return 'Reports';
   if (path === '/more') return 'More';
+  if (path === '/rentals') return 'Rentals';
+  if (path === '/inventory') return 'Inventory';
+  if (path === '/overheads') return 'Overheads';
   return 'Dashboard';
 };
 
@@ -18,6 +22,7 @@ const DashboardLayout = () => {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const title = getTitleFromPath(location.pathname);
+  useStackedTables();
 
   return (
     <div className="flex h-screen bg-surface">

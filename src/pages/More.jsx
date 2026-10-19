@@ -5,6 +5,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
+import { useNavigate } from 'react-router-dom';
+import { Truck, Package, Receipt } from 'lucide-react';
+import { uploadFile } from '../lib/storage';
 
 const formatDate = (dateString) => {
   if (!dateString) return '-';
@@ -17,6 +20,7 @@ const formatDate = (dateString) => {
 };
 
 const More = () => {
+  const navigate = useNavigate();
   const [selectedSubView, setSelectedSubView] = useState(null); // null, 'vendor_ledger', 'client_ledger', 'outstanding', 'masters'
   const [loading, setLoading] = useState(false);
   const [notification, setNotification] = useState(null);
@@ -189,6 +193,9 @@ const More = () => {
   const menuItems = [
     { id: 'vendor_ledger', icon: <Users size={20} />, label: 'Vendor Ledger', desc: 'Track vendor running balances, expenses, and paid invoices' },
     { id: 'client_ledger', icon: <Users size={20} />, label: 'Client Ledger', desc: 'Manage client invoices, schedules, and inflow receipts' },
+    { id: 'rentals', to: '/rentals', icon: <Truck size={20} />, label: 'Rentals', desc: 'Rental bookings, pick-up/return dates and invoices' },
+    { id: 'inventory', to: '/inventory', icon: <Package size={20} />, label: 'Inventory', desc: 'Product codes, stock, pricing, images and condition' },
+    { id: 'overheads', to: '/overheads', icon: <Receipt size={20} />, label: 'Overheads', desc: 'Fixed expenses, salaries and calendar' },
     { id: 'outstanding', icon: <FileText size={20} />, label: 'Outstanding Payments', desc: 'Central view of overdue receivables and payables' },
     { id: 'masters', icon: <Settings size={20} />, label: 'Master Lists Configurator', desc: 'Add, edit, or delete reference options' },
   ];
@@ -224,8 +231,9 @@ const More = () => {
     return vendors.map(v => {
       // Find budget items assigned to vendor (Credits to vendor)
       const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
-      const totalBilled = vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
-      
+      const oldBalance = Number(v.old_balance || 0);
+      const totalBilled = oldBalance + vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+
       // Find payments made to vendor (Debits)
       const vendPays = vendorPayments.filter(p => p.vendor_id === v.id);
       const totalPaid = vendPays.reduce((sum, p) => sum + Number(p.amount || 0), 0);
@@ -300,6 +308,23 @@ const More = () => {
     }
   };
 
+  const handleUploadQuotation = async (evt, file) => {
+    if (!file) return;
+    if (file.type !== 'application/pdf') {
+      showNotification("Please upload a PDF file", "error");
+      return;
+    }
+    try {
+      const url = await uploadFile(file, 'quotations');
+      const { error } = await supabase.from('events').update({ quotation_url: url, quotation_name: file.name }).eq('id', evt.id);
+      if (error) throw error;
+      showNotification("Quotation uploaded!");
+      loadAllData();
+    } catch (err) {
+      showNotification("Upload failed: " + err.message, "error");
+    }
+  };
+
   const handleRecordVendorExpense = async (e) => {
     e.preventDefault();
     try {
@@ -346,7 +371,8 @@ const More = () => {
 
       const vExpenses = budgetItems.filter(b => b.vendor_id === selectedEntityId);
       const vPays = vendorPayments.filter(p => p.vendor_id === selectedEntityId);
-      const currentCredits = vExpenses.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+      const currentCredits = Number(vendors.find(vend => vend.id === selectedEntityId)?.old_balance || 0) +
+        vExpenses.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
       const currentDebits = vPays.reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const currentOutstanding = currentCredits - currentDebits;
 
@@ -439,7 +465,7 @@ const More = () => {
       case 'vendors': 
         rows = vendors.map(v => {
           const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
-          const totalBilled = vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+          const totalBilled = Number(v.old_balance || 0) + vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
           return {
             ...v,
             total_business: `₹${totalBilled.toLocaleString('en-IN')}`
@@ -565,7 +591,7 @@ const More = () => {
           {menuItems.map((item) => (
             <div 
               key={item.id} 
-              onClick={() => setSelectedSubView(item.id)}
+              onClick={() => (item.to ? navigate(item.to) : setSelectedSubView(item.id))}
               className="card p-4 flex items-center space-x-4 cursor-pointer hover:bg-slate-50 border border-slate-100 hover:shadow-sm transition-all bg-white"
             >
               <div className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center">
@@ -696,9 +722,20 @@ const More = () => {
           ref: p.reference_number || '-',
           eventId: p.event_id
         }));
-        const txs = [...vExpenses, ...vPays].sort((a,b) => new Date(b.date) - new Date(a.date));
+        const oldBalance = Number(v?.old_balance || 0);
+        const oldBalanceRow = oldBalance > 0 ? [{
+          id: 'old-balance',
+          date: v?.created_at ? v.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+          type: 'Old Balance',
+          debit: 0,
+          credit: oldBalance,
+          ref: 'Carried over',
+          eventId: null
+        }] : [];
+        // Old balance is always listed last (oldest entry)
+        const txs = [...[...vExpenses, ...vPays].sort((a,b) => new Date(b.date) - new Date(a.date)), ...oldBalanceRow];
 
-        const totalCredits = vExpenses.reduce((sum, e) => sum + e.credit, 0);
+        const totalCredits = oldBalance + vExpenses.reduce((sum, e) => sum + e.credit, 0);
         const totalDebits = vPays.reduce((sum, p) => sum + p.debit, 0);
         const totalBal = totalCredits - totalDebits;
 
@@ -1024,6 +1061,45 @@ const More = () => {
               </div>
             </div>
 
+            {/* Event quotations (Zoho PDF uploads) */}
+            <div className="card p-5 bg-white overflow-x-auto border">
+              <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider mb-3">Events & Quotations</h4>
+              <table className="w-full text-left text-xs border-collapse min-w-[500px]">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-400 uppercase">
+                    <th className="py-2 pl-2">Event</th>
+                    <th className="py-2">Ref Serial</th>
+                    <th className="py-2">Quotation</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {cEvents.length === 0 ? (
+                    <tr><td colSpan="3" className="text-center py-6 text-slate-400">No events for this client.</td></tr>
+                  ) : cEvents.map(e => (
+                    <tr key={e.id}>
+                      <td className="py-2.5 pl-2 font-medium">{e.name}</td>
+                      <td className="py-2.5 text-slate-400">{e.event_id_serial || '-'}</td>
+                      <td className="py-2.5">
+                        <div className="flex items-center gap-3">
+                          {e.quotation_url ? (
+                            <a href={e.quotation_url} target="_blank" rel="noreferrer" className="text-primary-600 font-semibold hover:underline flex items-center gap-1 max-w-[220px] truncate">
+                              <FileText size={12} /> {e.quotation_name || 'Quotation.pdf'}
+                            </a>
+                          ) : (
+                            <span className="text-slate-400">Not uploaded</span>
+                          )}
+                          <label className="text-[10px] font-bold border border-primary-200 bg-primary-50 text-primary-600 px-2 py-0.5 rounded cursor-pointer hover:bg-primary-100">
+                            {e.quotation_url ? 'Replace' : 'Upload PDF'}
+                            <input type="file" accept="application/pdf" className="hidden" onChange={ev => { handleUploadQuotation(e, ev.target.files[0]); ev.target.value = ''; }} />
+                          </label>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
             {/* Client ledger transactions */}
             <div className="card p-5 bg-white overflow-x-auto border">
               <h4 className="font-bold text-xs text-slate-400 uppercase tracking-wider mb-3">Client Invoicing & Payment History</h4>
@@ -1074,7 +1150,7 @@ const More = () => {
         // Payables: vendor ledger rows where outstanding > 0
         const vendorPayables = vendors.map(v => {
           const vendBudgets = budgetItems.filter(b => b.vendor_id === v.id);
-          const totalBilled = vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
+          const totalBilled = Number(v.old_balance || 0) + vendBudgets.reduce((sum, b) => sum + (Number(b.quantity || 1) * Number(b.estimated_cost || 0)), 0);
           const totalPaid = vendorPayments.filter(p => p.vendor_id === v.id).reduce((sum, p) => sum + Number(p.amount || 0), 0);
           return {
             ...v,
@@ -1586,7 +1662,7 @@ const More = () => {
                   <div>
                     <label className="block font-semibold text-slate-600 mb-1">Client Mobile Number *</label>
                     <input 
-                      type="text"
+                      type="tel" inputMode="tel"
                       className="input-field py-2 text-xs"
                       placeholder="Phone"
                       value={masterForm.phone || ''}
@@ -1625,7 +1701,7 @@ const More = () => {
                   <div>
                     <label className="block font-semibold text-slate-600 mb-1">Phone Number</label>
                     <input 
-                      type="text"
+                      type="tel" inputMode="tel"
                       className="input-field py-2 text-xs"
                       placeholder="Phone"
                       value={masterForm.phone || ''}
@@ -1640,6 +1716,16 @@ const More = () => {
                       placeholder="Email"
                       value={masterForm.email || ''}
                       onChange={e => setMasterForm({...masterForm, email: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-slate-600 mb-1">Old Balance (₹)</label>
+                    <input
+                      type="number"
+                      className="input-field py-2 text-xs"
+                      placeholder="Existing balance carried over"
+                      value={masterForm.old_balance ?? ''}
+                      onChange={e => setMasterForm({...masterForm, old_balance: e.target.value === '' ? 0 : e.target.value})}
                     />
                   </div>
                   <div>

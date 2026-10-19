@@ -670,7 +670,7 @@ const Reports = () => {
           </div>
 
           {/* Aggregates Summary */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="card p-4 bg-green-50 border-green-100 text-center">
               <span className="block text-[10px] text-green-700 font-bold uppercase tracking-wider">Total Debited Cashflow</span>
               <span className="text-lg font-bold text-green-700">₹{totalCredit.toLocaleString('en-IN')}</span>
@@ -776,7 +776,7 @@ const Reports = () => {
           </div>
 
           {/* Aggregates Summary */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="card p-4 bg-slate-50 text-center">
               <span className="block text-[10px] text-slate-500 font-bold uppercase">Budget Projected</span>
               <span className="text-lg font-bold text-slate-800">₹{bvsTotalBudget.toLocaleString('en-IN')}</span>
@@ -914,7 +914,7 @@ const Reports = () => {
           </div>
 
           {/* Aggregates Summary */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="card p-4 bg-slate-50 text-center">
               <span className="block text-[10px] text-slate-500 font-bold uppercase">Total Revenue Inflow</span>
               <span className="text-lg font-bold text-slate-800">₹{overallRevenue.toLocaleString('en-IN')}</span>

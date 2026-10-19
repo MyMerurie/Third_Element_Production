@@ -15,6 +15,102 @@
   --font-sans: "Inter", sans-serif;
 }
 
+/* ------------------------------------------------------------------
+   Mobile-friendly overrides (unlayered so they beat utility classes)
+   ------------------------------------------------------------------ */
+@media (max-width: 767px) {
+  /* 16px+ inputs stop iOS from zooming on focus; 44px tap targets */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+    min-height: 44px;
+  }
+  .btn-primary, .btn-secondary { min-height: 44px; }
+  button, a, label { touch-action: manipulation; }
+
+  /* Every modal becomes a bottom sheet */
+  div.fixed.inset-0.z-50.flex.items-center.justify-center {
+    align-items: flex-end;
+    padding: 0;
+    z-index: 60; /* above the bottom nav (z-50) */
+  }
+  div.fixed.inset-0.z-50.flex.items-center.justify-center > div,
+  div.fixed.inset-0.z-50.flex.items-center.justify-center > form {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92vh;
+    overflow-y: auto;
+    border-radius: 1rem 1rem 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  /* Sticky Save/Cancel footer inside forms */
+  .sheet-actions {
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    padding: 0.75rem 0 calc(0.75rem + env(safe-area-inset-bottom));
+    border-top: 1px solid #f1f5f9;
+    z-index: 1;
+  }
+  .sheet-actions > button { flex: 1; }
+  main { overscroll-behavior-y: contain; }
+
+  /* Tables become stacked, labelled cards (labels set by useStackedTables) */
+  table.mtable, table.mtable tbody, table.mtable tr, table.mtable td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+  table.mtable thead { display: none; }
+  table.mtable tr {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    padding: 6px 12px;
+  }
+  table.mtable td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 0 !important;
+    text-align: right !important;
+    border: 0 !important;
+    max-width: none !important;
+    overflow-wrap: anywhere;
+  }
+  table.mtable td[data-label]::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #94a3b8;
+    text-align: left;
+  }
+  table.mtable td[data-label=""]::before { content: none; }
+  /* Bigger tap targets for icon-only action buttons in stacked rows */
+  table.mtable td button { padding: 10px; min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+  table.mtable td:not([data-label]):not([data-span]) { justify-content: flex-end; gap: 4px; }
+  table.mtable td:empty, table.mtable td:has(> .drag-handle) { display: none; }
+  /* "Label: [input]" filter pairs stack and fill the row */
+  main div.flex:has(> label + :is(input, select)):not(.flex-col) {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 0.25rem;
+  }
+  main div.flex:has(> label + :is(input, select)) > :is(input, select) { width: 100%; }
+  /* Header rows with title + buttons wrap instead of overflowing */
+  main .flex.justify-between:not(.flex-col):not(.flex-nowrap) { flex-wrap: wrap; row-gap: 0.5rem; }
+  table.mtable td[data-span] { justify-content: center; text-align: center !important; }
+  table.mtable tfoot, table.mtable tfoot tr, table.mtable tfoot td { display: block; width: 100%; }
+  /* Let wrappers stop scrolling sideways now that rows stack */
+  .overflow-x-auto:has(> table.mtable) { overflow-x: visible; }
+}
+
 @layer base {
   body {
     @apply bg-surface text-slate-800 antialiased font-sans;

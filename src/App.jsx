@@ -8,6 +8,9 @@ import AddEvent from './pages/AddEvent';
 import Reports from './pages/Reports';
 import More from './pages/More';
 import Login from './pages/Login';
+import Rentals from './pages/Rentals';
+import Inventory from './pages/Inventory';
+import Overheads from './pages/Overheads';
 
 const SESSION_KEY = 'tep_auth';
 
@@ -37,6 +40,9 @@ function App() {
           <Route path="events/:id" element={<EventDetail />} />
           <Route path="add" element={<AddEvent />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="rentals" element={<Rentals />} />
+          <Route path="inventory" element={<Inventory />} />
+          <Route path="overheads" element={<Overheads />} />
           <Route path="more" element={<More />} />
         </Route>
 
